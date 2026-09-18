@@ -1,0 +1,28 @@
+name: source-checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  wasm-and-synthetic:
+    runs-on: ubuntu-24.04
+    container: emscripten/emsdk:6.0.5@sha256:76a44fff907397784decc435115d07fcb9587a4f1504977f39f3745e538e3a1e
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Build and run asset-free checks
+        shell: bash
+        run: |
+          python3 tools/check_source.py
+          export EMSDK=/emsdk
+          source "$EMSDK/emsdk_env.sh"
+          ./web/build.sh
+          ./tools/check.sh
+  generated-decoder:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install native test dependencies
+        run: sudo apt-get update && sudo apt-get install --yes clang libclang-rt-dev liblzo2-2
+      - name: Generated decoder and sanitizer checks (no game files)
+        run: CC=clang python3 tools/test_lzodec.py
+      - name: Native component contracts (no game files)
+        run: I76_VERIFY_OUT="$RUNNER_TEMP/i76-native-units" tools/public_verify.sh --units

@@ -1,0 +1,8 @@
+/web/dist/
+/node_modules/
+/build/
+/game-data/
+/extracted/
+/trials/
+__pycache__/
+*.pyc

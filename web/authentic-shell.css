@@ -1,0 +1,343 @@
+/* Dedicated retail-style shell forms. The game stays a 4:3 paper surface;
+   browser chrome sits outside it instead of becoming part of the game UI. */
+:root { --shell-paper: #eacb78; --shell-paper-hi: #f3d789; --shell-ink: #39352a; }
+
+body:has(#shellPanel:not([hidden])) {
+  padding: .5rem;
+}
+body:has(#shellPanel:not([hidden])) .siteHeader,
+body:has(#shellPanel:not([hidden])) .siteFooter { display: none; }
+#appShell:has(#shellPanel:not([hidden])) {
+  width: 100%;
+  max-width: 100%;
+  gap: 0;
+}
+
+.authenticShell {
+  /* A fixed 16:9 sheet that always fits the viewport (H-UAT-017: at
+     1280x600 the utility footer fell below the fold, the same class of
+     fault the pause menu had). The height is written out rather than left
+     to aspect-ratio because #appShell is a flex column: a long ledger tab
+     (Combat, 24 rows) stretched the aspect-ratio box past 16:9 and pushed
+     the sheet off screen again. An explicit height makes the inner ledger
+     scroll instead. */
+  width: min(100vw - 1rem, 88rem, calc((100vh - 1.5rem) * 16 / 9));
+  height: calc(min(100vw - 1rem, 88rem, (100vh - 1.5rem) * 16 / 9) * 9 / 16);
+  max-width: 88rem !important;
+  color: var(--shell-ink);
+  font-family: var(--font-label);
+}
+
+.shellPaper {
+  position: relative;
+  width: 100%;
+  /* height, not min-height: the rail/grid children size themselves with
+     percentage heights, and those only resolve against a definite height.
+     With min-height they collapsed (Trips) or blew past the sheet (Combat)
+     — H-UAT-017. */
+  height: 100%;
+  overflow: hidden;
+  border: 2px solid #4c4635;
+  background-color: var(--shell-paper);
+  background-image:
+    radial-gradient(ellipse at 18% 13%, rgb(112 76 32 / 13%) 0 1.2%, transparent 3%),
+    radial-gradient(ellipse at 82% 26%, rgb(105 73 31 / 10%) 0 2%, transparent 4%),
+    radial-gradient(ellipse at 66% 78%, rgb(105 73 31 / 10%) 0 1.5%, transparent 3%),
+    linear-gradient(90deg, rgb(255 255 255 / 7%), transparent 30%, rgb(89 54 15 / 4%)),
+    repeating-linear-gradient(0deg, transparent 0 4px, rgb(67 48 19 / 1.8%) 5px);
+  box-shadow: 0 1rem 4rem #0009;
+}
+
+.shellPaper button {
+  min-height: 0;
+  border: 2px solid var(--shell-ink);
+  border-radius: 0;
+  background: transparent;
+  color: var(--shell-ink);
+  font-family: var(--font-label);
+  font-size: clamp(.58rem, 1.25vw, 1rem);
+  font-weight: 800;
+  letter-spacing: .04em;
+  line-height: 1;
+  text-transform: uppercase;
+  box-shadow: inset 0 0 0 1px #bf9d50;
+}
+.shellPaper button:hover:not(:disabled),
+.shellPaper button[aria-pressed="true"] { background: #bcc47a; border-color: var(--shell-ink); }
+.shellPaper button:disabled { color: #786e54; border-color: #786e54; opacity: .68; }
+.shellPaper select { color: var(--shell-ink); font-family: var(--font-hand); }
+
+.shellFormTitle {
+  position: absolute;
+  z-index: 2;
+  top: .8%; right: 3.5%;
+  margin: 0;
+  font-family: var(--font-label);
+  /* Sized to stay INSIDE the sheet: the 4.1vw/3.35rem title had its glyph
+     tops clipped by the paper's overflow and its baseline colliding with
+     the entry box border (H-UAT-017). */
+  font-size: clamp(1.1rem, 2.9vw, 2.5rem);
+  font-weight: 900;
+  letter-spacing: .025em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+.shellFormTitle span { padding: 0 .08em; }
+
+.scenarioGrid { display: grid; grid-template-columns: 33% 67%; height: 100%; }
+/* Flex column: the character box takes its natural (wrapped) height, the
+   scenario ledger flexes and scrolls, and nothing depends on percentage
+   heights that shift per tab (H-UAT-017). */
+.scenarioRail { position: relative; display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding: 3% 1.1% 2.5%; border-right: 2px solid var(--shell-ink); }
+.ledgerBox { flex: none; margin-bottom: 3.5%; border: 2px solid var(--shell-ink); }
+.ledgerBox h3, .entryInventory h3, .configGroup h3 {
+  margin: 0;
+  border-bottom: 2px solid var(--shell-ink);
+  background: rgb(231 227 198 / 57%);
+  font-size: clamp(.62rem, 1.5vw, 1.18rem);
+  font-weight: 900;
+  letter-spacing: .04em;
+  line-height: 1.2;
+  text-align: center;
+  text-transform: uppercase;
+}
+/*
+ * Character / mode tabs. shell.css styles #tripRow > button for the old
+ * dark-theme shell at ID specificity, so the paper overrides below must
+ * match it selector-for-selector or they lose: the H-UAT-017 "busted" menu
+ * was shell.css's wrap + pale smoke ink winning here — four wrapped tab
+ * rows clipped invisible inside a fixed-height box, and the selected tab
+ * painted #d2c9b8 on tan paper.
+ */
+#tripRow { display: flex; flex-wrap: wrap; gap: 0; justify-content: flex-start; }
+#tripRow > button {
+  flex: 1 0 auto; min-width: 6.5rem; min-height: 0; margin: 0;
+  border: 0; border-right: 1px solid #83754f; border-bottom: 1px solid #83754f;
+  border-radius: 0; padding: .22rem .5rem;
+  background: transparent; box-shadow: inset 0 0 0 0 transparent;
+  color: var(--shell-ink);
+  font-family: var(--font-hand); font-size: clamp(.7rem, 1.3vw, 1.05rem);
+  font-style: normal; font-weight: 600; letter-spacing: 0; line-height: 1.15;
+  text-transform: none;
+}
+#tripRow > button:hover:not(:disabled),
+#tripRow > button[aria-pressed="true"] { background: #b8c278; border-color: #83754f; color: var(--shell-ink); }
+
+.scenarioListBox { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 6rem; overflow: hidden; }
+.scenarioListBox h3 { flex: none; }
+#missionList { display: block; flex: 1 1 auto; min-height: 0; margin: 0; overflow: auto; scrollbar-width: thin; }
+.missionRow {
+  display: grid; grid-template-columns: 1.6em 1fr auto auto;
+  gap: .25rem; width: 100%; min-height: 0; padding: .12rem .5rem;
+  border: 0; border-bottom: 1px solid #887848; box-shadow: none;
+  background: transparent; color: var(--shell-ink); font-family: var(--font-hand);
+  font-size: clamp(.62rem, 1.45vw, 1.15rem); font-weight: 600; text-align: left;
+  text-transform: none;
+}
+.missionRow:hover:not(:disabled), .missionRow.selected { background: #b8c278; transform: none; }
+/* The persisted last-run outcome ("last: failed · 580 s") must be VISIBLE
+   here: hiding it made saved mission history vanish from the shipped shell
+   even though i76-save still held it (H-UAT-016). */
+.missionRow .last, .missionRow .num, .missionRow .mark { font-size: .58em; font-family: var(--font-label); }
+.missionRow .last { align-self: center; color: #6d6248; }
+.missionRow .mark { align-self: center; color: #645a42; text-transform: uppercase; }
+
+#arenaRules { display: grid; grid-template-columns: repeat(2, 1fr); gap: .15rem .4rem; padding: .2rem .4rem; border-bottom: 1px solid #887848; }
+#arenaRules .hint { grid-column: 1 / -1; font-size: .55rem; }
+#arenaRules label { display: none; }
+#arenaRules select { min-height: 1.25rem; padding: 0; font-size: .65rem; }
+
+#recommendedVehicles { display: grid; }
+#recommendedVehicles span { padding: .13rem .45rem; border-bottom: 1px solid #887848; font-family: var(--font-hand); font-size: clamp(.6rem, 1.35vw, 1.05rem); }
+.pencilNote { flex: none; margin: 2% 0 4% 4%; color: #71816c; font-family: var(--font-hand); font-size: clamp(.75rem, 1.5vw, 1.2rem); line-height: 1.05; transform: rotate(-8deg); }
+
+.entryArea { position: relative; min-width: 0; padding: 7% 3% 6.5%; }
+/* Top inset 8%: the box border starts BELOW the form title instead of
+   striking through it (H-UAT-017). */
+.entryArea::before { position: absolute; inset: 8% 3% 6%; border: 2px solid var(--shell-ink); content: ""; pointer-events: none; }
+.entryEmpty { display: grid; place-items: center; height: 100%; font-family: var(--font-hand); font-size: clamp(1rem, 2vw, 1.6rem); }
+#shellBrief { position: relative; height: 100%; }
+.entryTop { display: grid; grid-template-columns: auto 1fr 44%; align-items: start; gap: .45rem; min-height: 27%; padding: 1.2% 2%; }
+.entryTop > b { padding-top: .2rem; font-size: clamp(.7rem, 1.4vw, 1rem); text-transform: uppercase; }
+.handLine { min-height: 1.5em; border-bottom: 1px solid #665a3d; font-family: var(--font-hand); font-size: clamp(.8rem, 1.75vw, 1.35rem); }
+.entryInventory { grid-column: 3; display: grid; grid-template-columns: 1fr; grid-template-rows: auto minmax(3rem,auto) auto minmax(4rem,auto); margin-top: -2%; text-align: center; }
+.entryTop > .entryInventory { grid-column: 3; grid-row: 1 / span 2; }
+#entryWeapons, #entryParts { display: grid; align-content: start; }
+#entryWeapons span, #entryParts span { min-height: 1.2em; border-bottom: 1px solid #887848; font-family: var(--font-hand); font-size: clamp(.55rem, 1.25vw, .98rem); }
+
+/* Nitro's authored front + side SHP sketches live in loose database.tvf,
+   outside nitro.zfs. Keep the mesh line drawing as a clean fallback for an
+   older staged set that omitted that loose shell database. */
+#entryVehiclePortraits { position: absolute; left: 7%; top: 29%; width: 60%; height: 42%; }
+#entryVehiclePortraits canvas { position: absolute; max-width: none; image-rendering: auto; }
+#entryVehicleFrontCanvas { left: 17%; top: 0; width: 31%; height: auto; }
+#entryVehicleSideCanvas { left: 2%; bottom: 15%; width: 63%; height: auto; }
+#entryVehicleCanvas { position: absolute; left: 7%; top: 23%; width: 60%; height: 50%; max-height: none; object-fit: contain; background: transparent; filter: contrast(1.7); opacity: 1; }
+.shellData { position: absolute; left: 3%; bottom: 10%; width: 47%; max-height: 18%; margin: 0; overflow: hidden; font-family: var(--font-hand); font-size: clamp(.55rem, 1vw, .85rem); line-height: 1.15; white-space: pre-wrap; opacity: .85; }
+.entryVehicleFields { position: absolute; right: 2%; bottom: 10%; display: grid; grid-template-columns: auto 1fr; align-items: center; width: 62%; gap: .15rem .5rem; }
+.entryVehicleFields b { font-size: clamp(.55rem, 1.2vw, .9rem); text-transform: uppercase; }
+#openGarageBtn { grid-column: 2; margin-top: .25rem; padding: .38rem 1rem; }
+.entryScenarioTitle { position: absolute; left: 2%; top: 22%; width: 55%; margin: 0; border-bottom: 1px solid #665a3d; font-family: var(--font-hand); font-size: clamp(.75rem, 1.65vw, 1.25rem); font-weight: 500; text-align: center; }
+/* Inside the box, above its bottom rule — at -8% the border line struck
+   straight through the ENTER AREA / CANCEL labels (H-UAT-017). */
+.entryActions { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-around; gap: 20%; }
+.entryActions button { flex: 1; padding: .45rem 1rem; }
+/* Starts right of the ledger rail (33% + divider): at left 2% the footer
+   text printed over the rail's pencil note. One ellipsized line, never
+   wrapped: at narrow widths the wrapped notes climbed up over the ENTER
+   AREA / CANCEL buttons and swallowed their clicks (H-UAT-017). */
+.shellUtility { position: absolute; left: 34.5%; right: 2%; bottom: .5%; display: flex; gap: .75rem; align-items: center; min-width: 0; white-space: nowrap; font-family: var(--font-hand); font-size: .65rem; }
+.shellUtility > span { overflow: hidden; text-overflow: ellipsis; }
+.shellUtility button { flex: none; }
+.shellUtility #menuNote { flex: 1 1 auto; min-width: 0; margin: 0; }
+button.paperLink { border: 0; box-shadow: none; padding: 0; font-size: .6rem; text-decoration: underline; }
+
+/* Chassis Configuration Form.
+ * Grid flow (not absolute footer) so the action row and weight box reserve
+ * their own band. Absolute .chassisActions/.weightBox sat on the DEFENSE
+ * table and clipped Parts Catalog at 1280x600 (H-UAT-021). */
+.chassisForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 3fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100%;
+  min-height: 0;
+  padding: 1.2% 1.1% .6%;
+}
+.chassisHead {
+  display: grid;
+  grid-template-columns: 42% 58%;
+  grid-column: 1 / -1;
+  min-height: 8%;
+}
+.chassisIdentity { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: .1rem .35rem; }
+.chassisIdentity label, .chassisIdentity b { margin: 0; color: var(--shell-ink); font-size: clamp(.55rem, 1.2vw, .92rem); letter-spacing: .03em; text-transform: uppercase; }
+.chassisIdentity .missionVehicleBtn { grid-column: 2; justify-self: end; padding: .15rem .45rem; border-width: 1px; font-size: clamp(.45rem, .75vw, .62rem); }
+.chassisPicker { display: grid; grid-template-columns: 1.5rem 1fr 1.5rem; align-items: center; }
+.chassisPicker button { padding: .15rem; border-width: 1px; }
+#garageSel { min-height: 1.6rem; padding: 0 .25rem; border-bottom: 1px solid #665a3d; font-size: clamp(.65rem, 1.3vw, 1rem); }
+/* min(vw, vh): a short 1280-wide window must not keep the 3.1vw title
+   that ate the ledger after the footer band was reserved (H-UAT-021). */
+.chassisHead h2 { margin: 0; font-size: clamp(1.15rem, min(3.1vw, 5.2vh), 2.5rem); font-weight: 900; line-height: .92; text-align: right; text-transform: uppercase; }
+.chassisGrid {
+  display: grid;
+  grid-template-columns: 42% 58%;
+  grid-template-rows: minmax(0, 1fr);
+  grid-column: 1 / -1;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  border: 2px solid var(--shell-ink);
+}
+.configLedger {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 2px solid var(--shell-ink);
+}
+/* overflow hidden: a group that still runs out of room clips its last
+   sliver instead of double-printing over the next group (H-UAT-017). */
+.configGroup { position: relative; min-height: 0; overflow: hidden; border-bottom: 2px solid var(--shell-ink); }
+.configGroup h3 { position: absolute; left: 0; top: 0; bottom: 0; display: grid; place-items: center; width: 8%; border: 0; border-right: 2px solid var(--shell-ink); background: rgb(231 227 198 / 36%); writing-mode: vertical-rl; transform: rotate(180deg); }
+.configGroup dl { display: grid; grid-template-columns: 34% 66%; margin: 0 0 0 8%; }
+/* Height-aware preferred size: 1.05vw at 1280 is the clamp max, so a
+   short window kept large type and clipped Tire RL after the in-flow
+   footer stole ledger height (H-UAT-021 r2). min(vw, vh) matches the
+   1024-wide short-window size that already fit. */
+.configGroup dt, .configGroup dd { min-height: 0; margin: 0; padding: .03em .35em; border-bottom: 1px solid #887848; font-size: clamp(.48rem, min(1.05vw, 1.8vh), .82rem); line-height: 1.12; }
+.configGroup dd { border-left: 1px solid #887848; font-family: var(--font-hand); font-size: clamp(.52rem, min(1.25vw, 2.15vh), .98rem); }
+/* Flex shares follow row count (9 / 5 / 3 / ~5): the old 36/22/12/25
+   left the 9-row Parts group as the short-window pressure point. */
+.partsGroup { flex: 42 1 0; }
+.weaponsGroup { flex: 22 1 0; }
+.specialsGroup { flex: 13 1 0; }
+.paintRow {
+  display: grid;
+  grid-template-columns: 34% 66%;
+  flex: none;
+  border-bottom: 2px solid var(--shell-ink);
+  font-size: clamp(.48rem, min(1vw, 1.6vh), .8rem);
+  text-transform: uppercase;
+}
+.paintRow > * { display: flex; align-items: center; padding: 0 .35rem; }
+.paintRow span { border-left: 1px solid #887848; font-family: var(--font-hand); font-size: clamp(.62rem, 1.2vw, .95rem); }
+.defenseGroup {
+  display: flex;
+  flex-direction: column;
+  flex: 23 1 0;
+  border-bottom: 0;
+}
+.defenseHead, #garageDefense > div { display: grid; grid-template-columns: 30% 35% 35%; margin-left: 8%; text-align: center; }
+.defenseHead span, #garageDefense span, #garageDefense b { min-height: 0; border-right: 1px solid #887848; border-bottom: 1px solid #887848; font-size: clamp(.42rem, min(.9vw, 1.5vh), .7rem); line-height: 1.12; }
+#garageDefense { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+#garageDefense span { font-family: var(--font-hand); font-size: clamp(.50rem, min(1.05vw, 1.75vh), .82rem); }
+.defenseBalance { display: flex; flex: none; align-items: center; gap: .5rem; margin-left: 8%; padding: .1rem .35rem; font-size: clamp(.45rem, .85vw, .68rem); text-transform: uppercase; }
+.defenseBalance button { margin-left: auto; padding: .15rem .5rem; font-size: .6rem; }
+.chassisDrawing {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+#garageCanvas { position: absolute; inset: 3% 2% 8%; width: 100%; height: 90%; max-height: none; object-fit: contain; background: transparent; cursor: default; touch-action: auto; opacity: .8; }
+.schematicCar { position: absolute; left: 14%; top: 18%; width: 28%; height: 60%; border-left: 2px solid #716443; border-right: 2px solid #716443; opacity: .55; }
+.schematicCar .axle { position: absolute; left: -30%; width: 160%; border-top: 4px double #716443; }.schematicCar .front { top: 18%; }.schematicCar .rear { bottom: 16%; }.schematicCar .driveLine { position: absolute; left: 50%; top: 18%; bottom: 16%; border-left: 2px solid #716443; }
+.weightBox {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  align-self: end;
+  margin-top: auto;
+  width: min(45%, 100%);
+  padding: .3em .5em;
+  border: 2px solid var(--shell-ink);
+  font-size: clamp(.5rem, 1vw, .8rem);
+  font-weight: 800;
+  text-transform: lowercase;
+}
+.weightBox span { display: inline-block; min-width: 4em; border-bottom: 1px solid #665a3d; font-family: var(--font-hand); font-size: 1.3em; text-align: center; }
+.garageNote {
+  position: static;
+  align-self: center;
+  min-width: 0;
+  margin: 0;
+  font-size: .55rem;
+}
+.chassisActions {
+  display: flex;
+  gap: 3%;
+  align-self: stretch;
+  min-width: 0;
+  padding-block: .35%;
+}
+.chassisActions button { flex: 1 1 0; min-width: 0; padding: .35em .4em; }
+
+/* 1280x600 / 1280x577: reclaim a few header and footer pixels for the
+   9-row Parts group. 1366x768 and 1920x1080 do not match. */
+@media (max-height: 640px) {
+  .chassisForm { padding: .7% 1.1% .35%; }
+  .chassisHead { min-height: 0; }
+  #garageSel { min-height: 1.3rem; }
+  .chassisActions { padding-block: .15%; }
+  .chassisActions button { padding: .22em .35em; }
+  .weightBox { padding: .2em .4em; }
+}
+
+@media (max-width: 46rem) {
+  body { padding-inline: .25rem; }
+  .authenticShell {
+    width: min(100vw - .5rem, 88rem, calc((100vh - 1rem) * 16 / 10));
+    height: calc(min(100vw - .5rem, 88rem, (100vh - 1rem) * 16 / 10) * 10 / 16);
+  }
+  .siteHeader { padding-block: .5rem 1rem; }
+  .wordmark { font-size: 2.4rem; }
+  .shellUtility #menuNote,
+  .shellUtility #saveNote,
+  .shellUtility #restoreNote,
+  .shellUtility #resetProgressBtn { display: none; }
+  .shellUtility { left: auto; width: auto; }
+  .shellUtility #assetFilesBtn { display: inline-block; }
+}

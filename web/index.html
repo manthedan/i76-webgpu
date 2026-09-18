@@ -1,0 +1,2946 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>i76-web — developer preview</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E">
+<link rel="stylesheet" href="shell.css?v=20260813-buildid">
+<link rel="stylesheet" href="authentic-shell.css?v=20260815-h071">
+</head>
+<body>
+<header class="siteHeader">
+  <h1 class="wordmark" aria-label="i76-web developer preview">
+    <span class="wordmarkName">i76</span>
+    <span class="wordmarkNumber">web</span>
+    <span class="wordmarkEdition">unfinished developer preview</span>
+  </h1>
+</header>
+
+<main id="appShell">
+<section class="panel formPanel" id="assetPanel" aria-labelledby="assetHeading">
+  <header class="formHead">
+    <p class="formKicker">Local game data</p>
+    <h2 id="assetHeading">Bring your copy</h2>
+  </header>
+  <p class="hint" id="assetIntro">Bring the game files from your own copy —
+  <b>drop them anywhere on this page</b> (a whole extracted game folder
+  works), or use the buttons below. Nothing is uploaded; everything is
+  read locally in your browser.</p>
+  <div class="row actionRow">
+    <button id="openFolderBtn" hidden>Open game folder…</button>
+    <button id="continueBtn" class="secondaryAction" hidden>Continue with last folder</button>
+    <button id="forgetBtn" hidden>forget</button>
+    <button id="clearStagedBtn" class="secondaryAction" hidden>Clear staged files</button>
+    <button id="loadBtn" disabled>Load staged assets</button>
+  </div>
+  <p class="hint" id="stagedInfo" aria-live="polite">nothing staged yet</p>
+  <!-- Music playback status: which staged track is playing, and which
+       staged files this browser cannot decode (never a silent skip). -->
+  <p class="hint" id="musicNote" hidden></p>
+  <details id="assetManual">
+    <summary>manual pick (fallback for browsers without folder support)</summary>
+    <label for="zixFile">archive index — nitro.zix or I76.ZIX</label>
+    <input type="file" id="zixFile" disabled>
+    <label for="zfsFile">game archive — nitro.zfs or I76.ZFS, from your copy</label>
+    <input type="file" id="zfsFile" disabled>
+    <label for="dirInput">mission files (optional — select everything inside
+    miss8/)</label>
+    <input type="file" id="dirInput" multiple disabled>
+    <!-- The fonts are NOT inside nitro.zfs; they sit loose in the app folder.
+         Dropping the whole folder picks them up automatically, but this
+         manual path would otherwise miss them and the HUD would lose its
+         readout with no visible reason. -->
+    <label for="fntFile">HUD fonts — base6x7*.fnt (loose in the app
+    folder; without them the HUD has no text readout)</label>
+    <input type="file" id="fntFile" multiple disabled>
+    <!-- Same story as the fonts: the campaign file is loose, in addon/,
+         and this manual path sees filenames without their directory, so
+         it cannot route the file on its own. Without it there are no
+         trips and no mission titles. -->
+    <label for="campFile">campaign — addon/SCENARIO.DAT (without it the
+    menu has no trips and no mission titles)</label>
+    <input type="file" id="campFile" disabled>
+    <!-- Same story again: the redbook rips are loose in music/, and
+         without this pick a browser without folder-drop support has no
+         way to add music at all. -->
+    <label for="musicFile">music — the rips from the game's music folder
+    (optional; menu and driving music)</label>
+    <input type="file" id="musicFile" multiple disabled>
+    <label for="movieFile">cutscenes — .smk files from the game's smk folder
+    (optional; decoded locally)</label>
+    <input type="file" id="movieFile" multiple disabled></details>
+  <div id="status" role="status" aria-live="polite">loading wasm…</div>
+</section>
+<div class="dropVeil" id="dropVeil" hidden><div>release to stage game files</div></div>
+
+<section class="panel" id="moviePanel" aria-labelledby="movieTitle" hidden>
+  <h2 class="shellTitle" id="movieTitle">Cutscene</h2>
+  <canvas id="movieScreen" width="640" height="480" role="img"
+          aria-label="Supplied game cutscene"></canvas>
+  <div class="row mediaActions">
+    <button id="movieSkipBtn">skip</button>
+    <span class="hint" id="movieNote" aria-live="polite"></span>
+  </div>
+</section>
+
+<section class="panel authenticShell" id="shellPanel" aria-label="Game shell" hidden>
+  <div class="shellPaper scenarioForm" id="shellMenu">
+    <h2 class="shellFormTitle">Scenario<span>·</span>Driver Entry Form</h2>
+    <div class="scenarioGrid">
+      <aside class="scenarioRail">
+        <section class="ledgerBox characterBox">
+          <h3>Character</h3>
+          <div id="tripRow" role="group" aria-label="Characters and modes"></div>
+        </section>
+        <section class="ledgerBox scenarioListBox">
+          <h3 id="menuTitle">Scenarios</h3>
+          <!-- Browser-owned rules for the port's local arena controllers. -->
+          <div id="arenaRules" aria-label="Local arena rules" hidden>
+            <span class="hint" title="Port-authored local rules; not original multiplayer defaults">session rules</span>
+            <label for="lapsSel" id="lapsLbl">laps</label><select id="lapsSel"></select>
+            <label for="capsSel" id="capsLbl">captures</label><select id="capsSel"></select>
+            <label for="killsSel" id="killsLbl">kills</label><select id="killsSel"></select>
+            <label for="limitSel">time</label><select id="limitSel"></select>
+          </div>
+          <div id="missionList"></div>
+        </section>
+        <section class="ledgerBox recommendedBox">
+          <h3>Recommended Vehicles</h3>
+          <div id="recommendedVehicles">
+            <span>Jefferson Sovereign</span><span>Phaedra Palomino</span><span>Ransom Marshal</span>
+          </div>
+        </section>
+        <p class="pencilNote">Try these for<br>best results ↗</p>
+      </aside>
+
+      <main class="entryArea">
+        <div class="entryEmpty" id="entryEmpty">
+          <p>Choose a scenario from the ledger.</p>
+        </div>
+        <div id="shellBrief" hidden>
+          <div class="entryTop">
+            <b>Driver:</b><span class="handLine" id="entryDriver">Unknown</span>
+            <div class="entryInventory">
+              <h3>Weapons</h3><div id="entryWeapons"></div>
+              <h3>Parts</h3><div id="entryParts"></div>
+            </div>
+          </div>
+          <div id="entryVehiclePortraits" aria-label="Selected vehicle drawings" hidden>
+            <canvas id="entryVehicleFrontCanvas" width="192" height="107"></canvas>
+            <canvas id="entryVehicleSideCanvas" width="387" height="99"></canvas>
+          </div>
+          <canvas id="entryVehicleCanvas" width="640" height="480"
+                  aria-label="Selected vehicle line drawing" hidden></canvas>
+          <pre id="briefText" class="shellData"></pre>
+          <div class="entryVehicleFields">
+            <b>Make / Model:</b><span class="handLine" id="garageNow">Mission Vehicle</span>
+            <b>Variant:</b><span class="handLine" id="entryVariant"></span>
+            <button id="openGarageBtn" type="button">Configure Chassis</button>
+          </div>
+          <h3 class="entryScenarioTitle" id="briefTitle">Scenario</h3>
+          <div class="entryActions">
+            <button id="shellStartBtn">Enter Area</button>
+            <button id="shellBackBtn">Cancel</button>
+          </div>
+        </div>
+      </main>
+    </div>
+    <footer class="shellUtility">
+      <span id="menuNote"></span>
+      <button id="introBtn" class="paperLink" hidden>Play Intro</button>
+      <button id="assetFilesBtn" class="paperLink">Game Files</button>
+      <span id="restoreNote" hidden></span>
+      <span id="saveNote" hidden></span>
+      <button id="resetProgressBtn" class="paperLink" hidden>Start Campaign Over</button>
+    </footer>
+  </div>
+
+  <div class="shellPaper chassisForm" id="shellGarage" hidden>
+    <header class="chassisHead">
+      <div class="chassisIdentity">
+        <label for="garageSel">Make / Model:</label>
+        <div class="chassisPicker">
+          <button type="button" id="garagePrevBtn" title="previous chassis">‹</button>
+          <select id="garageSel"></select>
+          <button type="button" id="garageNextBtn" title="next chassis">›</button>
+        </div>
+        <button type="button" id="garageMissionBtn" class="missionVehicleBtn">Use Scenario Vehicle</button>
+        <b>Variant:</b><span class="handLine" id="garageVariant"></span>
+      </div>
+      <h2>Chassis<br>Configuration Form</h2>
+    </header>
+    <div class="chassisGrid">
+      <div class="configLedger">
+        <section class="configGroup partsGroup">
+          <h3>Parts</h3>
+          <dl>
+            <dt>Engine</dt><dd id="garageEngine"></dd>
+            <dt>Suspension</dt><dd id="garageSuspension"></dd>
+            <dt>Brakes</dt><dd id="garageBrakes"></dd>
+            <dt>Tire FR</dt><dd id="garageTireFR"></dd>
+            <dt>Tire FL</dt><dd id="garageTireFL"></dd>
+            <dt>Tire MR</dt><dd id="garageTireMR"></dd>
+            <dt>Tire ML</dt><dd id="garageTireML"></dd>
+            <dt>Tire RR</dt><dd id="garageTireRR"></dd>
+            <dt>Tire RL</dt><dd id="garageTireRL"></dd>
+          </dl>
+        </section>
+        <section class="configGroup weaponsGroup"><h3>Weapons</h3><dl id="garageWeapons"></dl></section>
+        <section class="configGroup specialsGroup"><h3>Spcl.</h3><dl id="garageSpecials"></dl></section>
+        <div class="paintRow"><b>Paint Scheme</b><span id="garagePaint"></span></div>
+        <section class="configGroup defenseGroup">
+          <h3>Defense</h3>
+          <div class="defenseHead"><span></span><span>armor</span><span>chassis</span></div>
+          <div id="garageDefense"></div>
+          <div class="defenseBalance">Lbs. available: <span id="garageAvailable">0.0</span><button disabled>Balance</button></div>
+        </section>
+      </div>
+      <div class="chassisDrawing">
+        <canvas id="garageCanvas" width="640" height="480"
+                aria-label="Vehicle chassis line drawing"></canvas>
+        <div class="schematicCar" aria-hidden="true">
+          <span class="axle front"></span><span class="axle rear"></span><span class="driveLine"></span>
+        </div>
+        <div class="weightBox">total weight: <span id="garageWeight"></span> lbs</div>
+      </div>
+    </div>
+    <p id="garageNote" class="garageNote"></p>
+    <p id="garagePreviewNote" hidden></p>
+    <div id="garageLoadout" hidden></div>
+    <div class="chassisActions">
+      <button id="garageCatalogBtn" type="button" disabled>Parts Catalog</button>
+      <button id="garageDoneBtn" type="button">Done</button>
+      <button id="garageCancelBtn" type="button">Cancel</button>
+    </div>
+  </div>
+
+  <div class="formSheet formState" id="shellDebrief" hidden>
+    <header class="formHead">
+      <p class="formKicker">Trip report</p>
+      <h2 class="shellTitle">Debrief</h2>
+    </header>
+    <pre class="shellText" id="debriefText"></pre>
+    <!-- The authored terminal verb stays visible as dev evidence while
+         the block above speaks player language (H-UAT-015). -->
+    <pre class="shellText debriefDev" id="debriefDev" hidden></pre>
+    <div class="row formActions">
+      <button id="shellNextBtn" hidden>next mission &rarr;</button>
+      <button id="shellCreditsBtn" hidden>credits &rarr;</button>
+      <button id="shellRetryBtn">retry</button>
+      <button class="secondaryAction" id="shellContinueBtn">back to trip</button>
+    </div>
+  </div>
+  <div class="formSheet formState" id="shellCredits" hidden>
+    <header class="formHead">
+      <p class="formKicker">Trip complete</p>
+      <h2 class="shellTitle">Credits</h2>
+    </header>
+    <pre class="shellText" id="creditsText">The Trip is complete.
+The base shell's own credits screen follows the final debrief; the
+supplied credits cutscene plays over this screen when it is staged.</pre>
+    <div class="row formActions">
+      <button class="secondaryAction" id="shellCreditsDoneBtn">back to trip</button>
+    </div>
+  </div>
+</section>
+
+<!-- The game screen. Its own panel: the shell panel is HIDDEN during
+     drive, so the canvas cannot live there, and the mesh browser it used
+     to live in is a diagnostic. -->
+<section class="panel" id="gamePanel" aria-label="Trip in progress" hidden>
+  <div class="gameViewport">
+    <canvas id="screen" width="640" height="480" role="img"
+            aria-label="Interstate '76 game view"></canvas>
+    <div id="objectiveHud" aria-live="polite" hidden></div>
+    <div id="radioHud" aria-live="polite" hidden></div>
+    <div id="pauseMenu" role="dialog" aria-modal="true"
+         aria-labelledby="pauseTitle" hidden>
+      <!-- Buttons float over the engine-drawn escape paper (6PLYOPT1).
+           Titles come from the VQM art; these are the port's actions. -->
+      <div class="pauseActions">
+        <h2 class="shellTitle" id="pauseTitle">Play Options</h2>
+        <div class="row">
+          <button id="pauseDoneBtn">Done</button>
+          <button class="dangerAction" id="pauseExitBtn">Exit Trip</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="row driveActions">
+    <span class="hint" id="speedo"></span>
+    <button id="recoverBtn" disabled title="return to recent safe ground (R)">recover</button>
+    <button id="camBtn" title="cycle camera views (F1–F11 presets)">view: cockpit</button>
+  </div>
+  <!-- Glance/mirror cluster: the stock bindings live on the keypad cluster
+       (Grey arrows) + Insert, which many keyboards lack. These buttons send
+       the same PlatformKey events the numpad does, so there is exactly one
+       input path. Glances are held actions — press-and-hold, release
+       recenters. -->
+  <div class="row" id="lookPad">
+    <button class="lookBtn" data-pk="26" title="hold: glance left (keypad 4)">&#x25C0; look</button>
+    <button class="lookBtn" data-pk="29" title="hold: glance up (keypad 2)">look &#x25B2;</button>
+    <button class="lookBtn" data-pk="28" title="hold: glance down (keypad 8)">look &#x25BC;</button>
+    <button class="lookBtn" data-pk="27" title="hold: glance right (keypad 6)">look &#x25B6;</button>
+    <button class="lookBtn" data-pk="30" title="hold: look at target (Insert)">target</button>
+    <button id="mirrorBtn" title="toggle rearview mirror (backquote `)">mirror</button>
+  </div>
+  <p class="hint" id="driveHint" aria-live="polite"></p>
+</section>
+
+<!-- Development controls: hidden unless the page is opened with ?dev=1.
+     Everything here is a diagnostic — a second, unsupervised way into
+     drive mode, the mesh browser, the parked WebGPU path, the topology
+     view. None of it is part of playing the game. -->
+<aside class="panel" id="devPanel" aria-label="Developer diagnostics" hidden>
+  <p class="hint">developer mode (?dev=1) — diagnostics, not gameplay.
+  Missions arrive with the game folder or a drop (miss8/, miss16/).</p>
+  <div class="row driveActions">
+    <select id="missionSel"></select>
+    <button id="missionBtn">Load mission</button>
+    <button id="driveBtn">drive</button>
+    <button id="viewBtn">topo / perspective</button>
+    <button id="meshModeBtn">meshes</button>
+    <button id="gpuBtn" title="software reference vs experimental WebGPU (textured terrain)">renderer: sw</button>
+  </div>
+  <p class="hint" id="hudInfo"></p>
+  <!-- DEV ONLY, not native: the decoded shell exposes Music Level but no
+       next-track control (docs/specs/re/music-system.md section 3). -->
+  <div class="row driveActions">
+    <span class="hint" id="devMusicNote" aria-live="polite">music: nothing playable staged</span>
+    <button id="musicNextBtn" type="button" title="developer-only track skip; not a native control">music: next ▸</button>
+  </div>
+  <div class="row driveActions">
+    <button id="trialRecBtn" title="record a human trial (per-tick input tape + F12 markers + canvas video) into a bundle for agent review — docs/HUMAN-UAT.md">⏺ record trial</button>
+    <button id="trialMarkBtn" title="drop a tick marker while recording (or press F12)" disabled>marker</button>
+    <span class="hint" id="trialInfo"></span>
+  </div>
+  <details id="vfsProbePanel">
+    <summary>vfs probes</summary>
+    <p class="hint">total <span id="vfsProbeTotal">0</span> · overflow
+      <span id="vfsProbeOverflow">0</span></p>
+    <div class="row driveActions">
+      <button id="vfsProbeCopyBtn" type="button" disabled>copy all</button>
+      <span class="hint" id="vfsProbeCopyInfo" aria-live="polite"></span>
+    </div>
+    <div id="vfsProbeGroups"></div>
+  </details>
+  <p class="hint" id="missionInfo">missions need the loose miss8/ files from
+  the game folder</p>
+  <div class="row driveActions">
+    <button id="prevBtn" title="previous mesh">&lt;</button>
+    <select id="meshSel"></select>
+    <button id="nextBtn" title="next mesh">&gt;</button>
+  </div>
+  <p class="hint" id="meshInfo">—</p>
+  <p class="hint">&larr;/&rarr; cycle &middot; mouse wheel zoom &middot;
+  space toggles spin</p>
+</aside>
+
+</main>
+<footer class="siteFooter">Engine code only; supply your own game data.
+  <a href="../THIRD-PARTY.md">Third-party licences and source notices</a>.
+  Includes <a href="../third_party/libsmacker/COPYING">LGPL libsmacker</a>;
+  <a href="../docs/BUILDING.md">source rebuild/relink instructions</a>.
+</footer>
+<!-- Outside .siteFooter: the authentic shell hides that footer, but a
+     stale locally-built wasm must still self-identify (H-UAT-022). -->
+<p class="buildId" id="buildId" hidden></p>
+
+<script src="audio.js?v=20260813-5"></script>
+<script src="trial.js?v=20260811-2"></script>
+<script type="module">
+/* The engine module is versioned by the build stamp (dist/stamp.json is
+ * regenerated by web/build.sh and fetched no-store), so a rebuild always
+ * busts the cached i76web.mjs AND its wasm. The old static ?v= literal
+ * here never changed between builds and could pair a stale mjs with a
+ * fresh wasm. Falls back to ?v=dev when stamp.json is unreachable. */
+const BUILD_V = await fetch('dist/stamp.json', { cache: 'no-store' })
+  .then((r) => (r.ok ? r.json() : null))
+  .then((j) => (j && j.stamp) || 'dev')
+  .catch(() => 'dev');
+const I76Web = (await import(`./dist/i76web.mjs?v=${BUILD_V}`)).default;
+import * as Assets from './assets.js?v=20260813-portrait-keys1';
+import * as Save from './save.js?v=20260807-3';
+import * as ShellArt from './shell-art.js?v=20260813-portrait-keys1';
+
+const W = 640, H = 480;
+const $ = (id) => document.getElementById(id);
+const status = (t) => { $('status').textContent = t; };
+
+/*
+ * Developer mode. ONE explicit switch, query-param only and never
+ * persisted, so a bare page load can never inherit it. `?dev=0` must turn
+ * diagnostics OFF, which .has('dev') would not do.
+ *
+ * This is a reveal, not a security boundary — the controls stay in the
+ * DOM inside a hidden panel. What makes it honest is the published
+ * artifact allowlist (.github/workflows/pages.yml): the modules the dev
+ * controls reach for are not shipped, so revealing them yields the
+ * software fallback rather than a hidden feature.
+ */
+const query = new URLSearchParams(location.search);
+const devParam = query.get('dev');
+const DEV = devParam !== null && devParam !== '0';
+$('devPanel').hidden = !DEV;
+/* H-UAT-064: current-tick extrapolation is the consumer default. The old
+ * previous/current interpolation remains an explicit, non-persisted dev A/B
+ * path: ?dev=1&camlerp=interp (or camlerp=extrap to name the default). */
+const camLerpParam = DEV ? query.get('camlerp') : null;
+let camLerp = camLerpParam === 'interp' ? 'interp' : 'extrap';
+if (camLerpParam && camLerpParam !== 'interp' && camLerpParam !== 'extrap')
+  console.error('camlerp must be interp or extrap; using extrap');
+/* M6 promotion payoff: WebGPU presents at the canvas's physical display
+ * resolution by default. The 640x480 parity target is an explicit dev-only
+ * selector so product sessions cannot accidentally inherit gate settings. */
+const gpuResParam = DEV ? query.get('gpures') : null;
+const gpuResolution = gpuResParam === 'fidelity' ? 'fidelity' : 'native';
+if (gpuResParam && gpuResParam !== 'fidelity' && gpuResParam !== 'native')
+  console.error('gpures must be fidelity or native; using native');
+
+const M = await I76Web({
+  locateFile: (p) => 'dist/' + p + '?v=' + BUILD_V,
+});
+/* Native paper maps are static. Only the explicit developer shell asks C to
+ * add its visibly labelled, uncalibrated terrain-AABB estimate marker. */
+if (typeof M._web_set_dev_mode === 'function')
+  M._web_set_dev_mode(DEV ? 1 : 0);
+{
+  const id = M.ccall('web_build_id', 'string', [], []) || 'unknown';
+  const el = $('buildId');
+  el.textContent = 'build ' + id;
+  el.hidden = false;
+  /* H-UAT-036 lesson: the renderer pref is sticky across sessions, and
+   * an invisible GPU renderer produced a false owner bug report. Keep
+   * the choice visible: the footer names the active renderer whenever
+   * it is not the software default, and updates on toggle. */
+  window.__footerRenderer = () => {
+    /* `renderer` is a let declared later in this module — referencing
+     * it before initialization throws (TDZ), so the badge fails soft
+     * until the toggle code calls this again after init. */
+    try {
+      el.textContent = 'build ' + id + (renderer === 'gpu' ? ' · gpu' : '');
+    } catch { el.textContent = 'build ' + id; }
+  };
+}
+if (DEV && typeof M._web_set_log_level === 'function')
+  M._web_set_log_level(1);
+
+/* One-shot software pixel history. Query usage is deliberately gated by the
+ * same explicit dev switch as the Wasm handle; C exports remain available to
+ * Node/browser probes for arm -> render -> read workflows. */
+const pixelHistoryApi = {
+  enable(x, y, provenance = 'js-probe') {
+    if (!Number.isInteger(x) || !Number.isInteger(y) ||
+        x < 0 || x >= W || y < 0 || y >= H)
+      throw new RangeError(`pixelHistory out of bounds: ${x},${y}`);
+    return M.ccall('web_pixel_history_enable', 'number',
+                   ['number', 'number', 'string'], [x, y, provenance]);
+  },
+  read() {
+    const raw = M.ccall('web_pixel_history_json', 'string', [], []);
+    return raw ? JSON.parse(raw) : null;
+  },
+  disable() { M._web_pixel_history_disable(); },
+};
+if (DEV) window.I76PixelHistory = pixelHistoryApi;
+let pixelHistoryQueryPending = false;
+if (DEV) {
+  const raw = new URLSearchParams(location.search).get('pixelHistory');
+  const match = raw && /^(\d+),(\d+)$/.exec(raw);
+  if (raw && !match) {
+    console.error('pixelHistory must be x,y within the 640x480 framebuffer');
+  } else if (match) {
+    const x = Number(match[1]), y = Number(match[2]);
+    if (x >= W || y >= H) {
+      console.error(`pixelHistory out of bounds: ${x},${y}`);
+    } else if (pixelHistoryApi.enable(
+                 x, y, `${location.pathname}${location.search}`) === 0) {
+      pixelHistoryQueryPending = true;
+    }
+  }
+}
+function publishPixelHistoryQuery() {
+  if (!pixelHistoryQueryPending) return;
+  const raw = M.ccall('web_pixel_history_json', 'string', [], []);
+  if (!raw) return;
+  console.log(raw);
+  pixelHistoryApi.disable();
+  pixelHistoryQueryPending = false;
+}
+
+/* Designed VFS fallthroughs (paint candidates, optional texture forms, etc.)
+ * are useful as a set, not as hundreds of console lines. Render the exported
+ * bounded table by extension; only rebuild when its counters move. */
+let vfsProbeLastCount = -1;
+let vfsProbeLastOverflow = -1;
+const vfsProbeNames = () => {
+  if (!DEV || typeof M._web_vfs_probe_count !== 'function') return [];
+  const names = [];
+  for (let i = 0, n = M._web_vfs_probe_count(); i < n; i++)
+    names.push(M.ccall('web_vfs_probe_name', 'string', ['number'], [i]));
+  return names;
+};
+function refreshVfsProbes() {
+  if (!DEV || typeof M._web_vfs_probe_count !== 'function' ||
+      typeof M._web_vfs_probe_overflow !== 'function') return;
+  const count = M._web_vfs_probe_count();
+  const overflow = M._web_vfs_probe_overflow();
+  if (overflow !== vfsProbeLastOverflow) {
+    vfsProbeLastOverflow = overflow;
+    $('vfsProbeOverflow').textContent = String(overflow);
+  }
+  /* Overflow can tick on every suppressed fallthrough after saturation. The
+   * stored name groups did not change, so do not rebuild a 1,024-row DOM for
+   * counter-only updates. */
+  if (count === vfsProbeLastCount) return;
+  vfsProbeLastCount = count;
+  $('vfsProbeTotal').textContent = String(count);
+  $('vfsProbeCopyBtn').disabled = count === 0;
+
+  const groups = new Map();
+  for (const name of vfsProbeNames()) {
+    const leaf = name.split('/').pop() || name;
+    const dot = leaf.lastIndexOf('.');
+    const ext = dot >= 0 && dot + 1 < leaf.length
+      ? leaf.slice(dot).toLowerCase() : '(no extension)';
+    if (!groups.has(ext)) groups.set(ext, []);
+    groups.get(ext).push(name);
+  }
+  const root = $('vfsProbeGroups');
+  root.replaceChildren();
+  for (const ext of [...groups.keys()].sort()) {
+    const names = groups.get(ext).sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    const detail = document.createElement('details');
+    detail.className = 'vfsProbeGroup';
+    const summary = document.createElement('summary');
+    summary.textContent = `${ext} — ${names.length}`;
+    const list = document.createElement('ul');
+    for (const name of names) {
+      const item = document.createElement('li');
+      const code = document.createElement('code');
+      code.textContent = name;
+      item.appendChild(code);
+      list.appendChild(item);
+    }
+    detail.append(summary, list);
+    root.appendChild(detail);
+  }
+}
+async function copyVfsProbes() {
+  const names = vfsProbeNames();
+  if (!names.length) return;
+  const text = names.join('\n');
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      const copied = document.execCommand('copy');
+      area.remove();
+      if (!copied) throw new Error('copy command rejected');
+    }
+    $('vfsProbeCopyInfo').textContent = `copied ${names.length} names`;
+  } catch (err) {
+    $('vfsProbeCopyInfo').textContent = `copy failed: ${err.message}`;
+  }
+}
+if (DEV) {
+  $('vfsProbeCopyBtn').onclick = copyVfsProbes;
+  refreshVfsProbes();
+  setInterval(refreshVfsProbes, 250);
+}
+I76Audio.attach(M);   // M5 audio: gesture unlock + 50ms sound sync
+// M0 dev diagnostics. The raw Emscripten Module is a developer handle
+// (it can call every web_* export directly); a consumer page exposes only
+// the liveness counters.
+window.__i76 = DEV ? { M, Assets, frames: 0, blitErr: null,
+                        camlerp: camLerp, gpuResolution }
+                   : { frames: 0, blitErr: null };
+Assets.attach(M);
+
+/*
+ * Music: user-supplied rips staged under /data/music, played by
+ * I76Audio (same AudioContext as the SFX — no second subsystem). Bytes
+ * come back out of MEMFS; nothing is fetched or uploaded. audio.js maps
+ * numeric .mp3 basenames to CD track numbers: native FACT shell=10;
+ * drive rotation over 2..11 is a PORT INTERIM pending the authored WRLD
+ * per-mission track (docs/specs/re/music-system.md).
+ */
+I76Audio.setMusicSource((name) =>
+  Promise.resolve(Assets.readStaged('music/' + name)));
+const musicBad = [];
+function refreshMusicStatus() {
+  const state = I76Audio._musicState();
+  const text =
+    (state.playing
+      ? `music: ${state.paused ? 'paused' : 'playing'} track ${state.track} (${state.playing})`
+      : 'music: nothing playable staged') +
+    (musicBad.length
+       ? ` · cannot decode: ${musicBad.join(', ')} (skipped)` : '');
+  const consumerNote = $('musicNote');
+  consumerNote.hidden = false;
+  consumerNote.textContent = text;
+  $('devMusicNote').textContent = text;
+}
+I76Audio.onMusicStatus((s) => {
+  if (s.state === 'unsupported' && !musicBad.includes(s.track))
+    musicBad.push(s.track);
+  if (s.state === 'playing' || s.state === 'paused' ||
+      s.state === 'unsupported')
+    refreshMusicStatus();
+});
+if (DEV) {
+  /* Dev-panel-only affordance. Native has no next-song input: the music
+   * decode documents Music Level as its only user control. */
+  $('musicNextBtn').onclick = () => I76Audio.nextTrack();
+}
+
+/*
+ * The saved profile, loaded BEFORE any DOM handler is registered below.
+ * It has to be: a file input's change handler can fire the moment the
+ * page is interactive, and if the module were still suspended on this
+ * await, that handler would run against half-initialised module scope
+ * (observed: "Cannot access 'dragDepth' before initialization" from a
+ * file pick that raced the load).
+ */
+const progress = await Save.load();
+// The garage choice is a profile setting: apply it before anything can
+// start a mission. "" means "whatever the mission itself names".
+M.ccall('web_shell_set_vehicle', null, ['string'], [progress.garage.vcf]);
+status('wasm ready — drop the game folder anywhere on this page, or open it below.');
+
+const pal32 = new Uint32Array(256);
+// Blit palette: the mission's level .act whenever the engine exposes one
+// (palette unification — the original game renders everything, cockpit
+// included, in the level palette; HUD art lives at indices 32+). Without
+// a level palette the mesh debug palette stays. Returns true when the
+// level palette is in use.
+function refreshPalette() {
+  const lv = M._web_level_palette();
+  const base = lv !== 0 ? lv : M._web_palette();
+  const pb = heap().subarray(base, base + 768);
+  for (let i = 0; i < 256; i++)
+    pal32[i] = (255 << 24) | (pb[i*3+2] << 16) | (pb[i*3+1] << 8) | pb[i*3];
+  return lv !== 0;
+}
+// Fresh heap view per access: MEMFS writes grow wasm memory, which detaches
+// any previously captured HEAPU8 view. wasmMemory.buffer is always current.
+const heap = () => new Uint8Array(M.wasmMemory.buffer);
+let yaw = 0.6, zoom = 1.0, spin = true, last = performance.now();
+let mode = 'mesh', dist = -1, terrainView = 0;
+let ctx, img, d32;
+
+// ---- M6 Tier-2: ?renderer=gpu drive-mode WebGPU path ------------------
+// gpu_scene.mjs renders the engine's experimental terrain/scene bridge
+// (.map/.m16 textures plus the exported camera). Software stays authoritative.
+// The GPU path draws into its own canvas swapped in over #screen only
+// while drive mode is active under the gpu renderer.
+// ?renderer=gpu|sw wins; otherwise the last choice sticks (localStorage).
+// WebGPU remains an explicit developer renderer choice; when selected, its
+// product presentation defaults to native physical canvas resolution. Gate 32
+// names ?dev=1&gpures=fidelity and retains the immutable 640x480 parity path.
+let renderer = DEV ? (new URLSearchParams(location.search).get('renderer') ||
+                      progress.prefs.renderer || 'sw')
+                   : 'sw';
+let gpuScene = null, gpuMod = null, gpuDraws = null;
+let gpuCanvas = null, gpuStarting = false, gpuDirty = true, gpuFailed = false;
+let gpuViewDirty = true, gpuTarget = null;
+/* LOD rings + roads are built around the eye snapped to the far LOD grid
+ * (terrain.c: TR_STEP_FAR 16 x 5 m = 80 m). Geometry rebuilds only when the
+ * camera crosses that snapped cell (or the mission/view state is dirty). */
+const GPU_LOD_CELL_M = 80;
+let gpuLodCell = null;   // [cx, cz] of the last LOD/road geometry rebuild
+
+const gpuCellOf = (cam) =>
+  [Math.floor(cam.eye[0] / GPU_LOD_CELL_M),
+   Math.floor(cam.eye[2] / GPU_LOD_CELL_M)];
+
+const gpuDesiredTarget = () => {
+  if (!gpuMod) return { mode: 'fidelity', w: W, h: H, scale: 1, capped: false };
+  const viewport = document.querySelector('.gameViewport');
+  return gpuMod.renderTargetSize(gpuResolution,
+    viewport?.clientWidth || W, viewport?.clientHeight || H,
+    window.devicePixelRatio || 1);
+};
+
+function gpuRelease() {
+  const device = gpuScene && gpuScene.device;
+  if (gpuScene) {
+    try { gpuScene.destroy(); } catch { /* device may already be lost */ }
+  }
+  gpuScene = null; gpuDraws = null;
+  if (device && device.destroy) {
+    try { device.destroy(); } catch { /* already lost/destroyed */ }
+  }
+  if (gpuCanvas) { gpuCanvas.remove(); gpuCanvas = null; }
+  gpuLodCell = null; gpuTarget = null;
+  gpuDirty = true; gpuViewDirty = true;
+  $('screen').style.display = '';
+}
+
+/* Full failure teardown. Stays failed until an explicit renderer retry. */
+function gpuTeardown(msg, err) {
+  gpuRelease();
+  gpuFailed = true;
+  window.__i76.blitErr = msg + (err ? ': ' + String(err && err.stack || err) : '');
+  $('missionInfo').textContent = `${msg} — software renderer in use`;
+}
+
+async function gpuEnsure() {
+  if (gpuScene || gpuStarting || gpuFailed) return;
+  gpuStarting = true;
+  let device = null;
+  try {
+    gpuMod = await import('./gpu_scene.mjs');
+    const adapter = navigator.gpu ? await navigator.gpu.requestAdapter() : null;
+    device = adapter ? await adapter.requestDevice() : null;
+    if (!device) throw new Error('WebGPU unavailable');
+    if (gpuCanvas) gpuCanvas.remove();   // never two canvases
+    gpuCanvas = document.createElement('canvas');
+    gpuCanvas.className = 'gpuGameCanvas';
+    gpuCanvas.setAttribute('role', 'img');
+    gpuCanvas.setAttribute('aria-label', 'Interstate \'76 WebGPU game view');
+    gpuTarget = gpuDesiredTarget();
+    gpuCanvas.width = gpuTarget.w;
+    gpuCanvas.height = gpuTarget.h;
+    $('screen').after(gpuCanvas);
+    gpuScene = new gpuMod.GpuScene(device, gpuCanvas, gpuMod.readSkyColor(M),
+                                   gpuTarget.w, gpuTarget.h,
+                                   gpuMod.readSkyZenith(M), false,
+                                   { pointSampled: gpuResolution === 'native' });
+    /* Dev probes opt in by installing this array. The callback runs only
+     * after GpuScene has written its f32 uniforms and submitted the encoder. */
+    if (DEV && Array.isArray(window.__i76?.gpuSubmissionTrace)) {
+      gpuScene.submissionObserver = (submission) =>
+        window.__i76.gpuSubmissionTrace.push(submission);
+    }
+    // Surface GPU failures instead of freezing on the last good frame.
+    device.lost.then((info) => {
+      if (info.reason === 'destroyed') return;   // our own teardown
+      // Only the live scene's device may tear down (stale retry promises
+      // from a replaced device must not kill the new scene).
+      if (gpuScene && gpuScene.device === device)
+        gpuTeardown(`WebGPU device lost (${info.message})`);
+    });
+    device.onuncapturederror = (e) => {
+      const message = e.error && e.error.message || 'uncaptured WebGPU error';
+      if (gpuScene && gpuScene.device === device)
+        gpuTeardown(`WebGPU error (${message})`, e.error);
+    };
+    gpuDirty = true;
+  } catch (e) {
+    if (gpuScene) { try { gpuScene.destroy(); } catch { /* ignore */ } gpuScene = null; }
+    if (device && device.destroy) {
+      try { device.destroy(); } catch { /* already lost/destroyed */ }
+    }
+    if (gpuCanvas) { gpuCanvas.remove(); gpuCanvas = null; }
+    gpuFailed = true;   // software until the explicit renderer-toggle retry
+    window.__i76.blitErr = 'gpu init: ' + String(e && e.stack || e);
+    $('missionInfo').textContent =
+      `WebGPU init failed (${e && e.message || e}) — software renderer in use`;
+  } finally {
+    gpuStarting = false;
+  }
+}
+
+function gpuFrame() {
+  const cam = gpuMod.readCamera(M);
+  const cell = gpuCellOf(cam);
+  /* WebGPU f32 uniforms cannot safely cancel a ~48 km world-space camera VP
+   * against a separately rounded cockpit/car model matrix. Rebase the whole
+   * GPU frame to its stable LOD cell; the same transition already owns the
+   * bounded terrain/road geometry rebuild, while draw models refresh below. */
+  const originChanged = gpuScene.setWorldOrigin(
+    [cell[0] * GPU_LOD_CELL_M, 0, cell[1] * GPU_LOD_CELL_M]);
+  if (originChanged) gpuViewDirty = true;
+  if (gpuDirty) {
+    // Mission state changed: drop every mission-owned GPU resource, then
+    // re-upload persistent skins and meshes exactly once. Camera presets do
+    // NOT enter this path: their geometry-only refresh is handled below.
+    gpuScene.resetMission();
+    gpuScene.setSky(gpuMod.readSkyColor(M), gpuMod.readSkyZenith(M));
+    if (gpuMod.applySoftwareLight) gpuMod.applySoftwareLight(M, gpuScene);
+    if (gpuMod.readSkyTex) gpuScene.setSkyTex(gpuMod.readSkyTex(M));
+    gpuScene.setTerrainTexture(gpuMod.readTerrainTexture(M));
+    // The C drawlist is the required GPU scene-membership bridge.
+    gpuDraws = gpuMod.collectDraws(M);
+    if (!gpuDraws) { gpuTeardown('WebGPU scene stream unavailable (no C drawlist)'); return; }
+    gpuScene.setInstances(gpuDraws, M);   // M resolves face texture names
+    gpuLodCell = null;                    // force the geometry rebuild below
+    gpuViewDirty = true;
+    gpuDirty = false;
+  }
+  if (gpuViewDirty || !gpuLodCell ||
+      gpuLodCell[0] !== cell[0] || gpuLodCell[1] !== cell[1]) {
+    // LOD rings + roads track the eye's 80 m snapped cell. Geometry only —
+    // mission skins stay put (roads.tex rides along once per dirty reset;
+    // setRoads leaves supplied tiles in place when tex is absent).
+    const lod = gpuMod.readTerrainLod ? gpuMod.readTerrainLod(M) : null;
+    const first = !gpuLodCell;
+    if (lod && lod.nverts > 0)
+      gpuScene.setTerrainLod(lod.verts, lod.nverts);
+    else
+      gpuScene.setTerrain(gpuMod.readTerrainGrid(M));
+    if (gpuMod.readRoads) {
+      const roads = gpuMod.readRoads(M);
+      if (roads) gpuScene.setRoads(first ? roads : { ...roads, tex: null });
+    }
+    gpuLodCell = cell;
+    gpuViewDirty = false;
+  }
+  // Live transforms + visibility: mission objects move and combat hides them.
+  // Count or record-identity changes mean scene membership shifted
+  // (spawns/destroys/replacements). Recollect before rendering another frame.
+  const refreshed = gpuMod.refreshDraws(M, gpuDraws);
+  if (refreshed !== gpuDraws.count) { gpuDirty = true; return; }
+  // Consume the software path's complete authored post-world 2-D composite:
+  // cockpit/HUD, combat feedback, damage flash and all paper surfaces.
+  const overlay = gpuMod.readOverlay(M, W, H);
+  if (overlay)
+    gpuScene.setHud(overlay.indices, gpuMod.readPalette(M), overlay.mask);
+  if (gpuScene.setCameraBasis) gpuScene.setCameraBasis(cam);
+  /* Rearview mirror: the C side owns activation, the derived camera and the
+   * rect (cockpit-only, never under a mission camera); this is a pure
+   * consumer, like the primary camera above. The rear CameraView rides
+   * along so the mirror's authored sky dome samples through the reflected
+   * REAR basis, not the primary camera's. */
+  const rv = gpuMod.readRearview ? gpuMod.readRearview(M) : null;
+  const sx = gpuScene.w / W, sy = gpuScene.h / H;
+  let mirror = null;
+  if (rv) {
+    const x = Math.round(rv.rect[0] * sx), y = Math.round(rv.rect[1] * sy);
+    const w = Math.min(gpuScene.w - x, Math.round(rv.rect[2] * sx));
+    const h = Math.min(gpuScene.h - y, Math.round(rv.rect[3] * sy));
+    mirror = {
+      vp: Float32Array.from(gpuMod.cameraViewProj(
+        rv.cam, w, h, gpuScene.worldOrigin)),
+      cam: rv.cam, x, y, w, h,
+    };
+  }
+  /* Keep this matrix as f64 through JS-side VP*model composition; GpuScene
+   * performs the one final f32 conversion for each uploaded uniform. */
+  const frameScene = gpuScene;
+  frameScene.frame(gpuMod.cameraViewProj(
+                     cam, frameScene.w, frameScene.h, frameScene.worldOrigin),
+                   gpuDraws, false, mirror)
+    ?.catch?.((e) => {
+      /* A DPR resize may retire this immutable target while its submission is
+       * settling. A stale rejection must never tear down the replacement. */
+      if (gpuScene === frameScene)
+        gpuTeardown(`WebGPU frame failed (${e && e.message || e})`, e);
+    });
+}
+
+function blit() {
+  if (mode === 'drive') publishPixelHistoryQuery();
+  if (mode === 'drive' && renderer === 'gpu' && !gpuFailed) {
+    if (!gpuScene) { gpuEnsure(); return; }  // async init; sw resumes if it fails
+    const wanted = gpuDesiredTarget();
+    if (!gpuTarget || wanted.w !== gpuTarget.w || wanted.h !== gpuTarget.h) {
+      /* Render-target resources are immutable together. A DPR/layout change
+       * recreates the scene; software remains visible during the async gap. */
+      gpuRelease();
+      gpuEnsure();
+      return;
+    }
+    gpuCanvas.style.display = '';
+    /* Phase D: bilinear present for GPU (software stays pixelated). */
+    gpuCanvas.style.imageRendering = 'auto';
+    $('screen').style.display = 'none';
+    if (DEV) window.__i76.gpuTarget = {
+      ...gpuTarget, pointSampled: gpuScene.pointSampled,
+      cssWidth: gpuCanvas.clientWidth, cssHeight: gpuCanvas.clientHeight,
+      dpr: window.devicePixelRatio || 1,
+    };
+    try { gpuFrame(); }
+    catch (e) { gpuTeardown(`WebGPU frame failed (${e && e.message || e})`, e); }
+    return;
+  }
+  if (gpuCanvas) { gpuCanvas.style.display = 'none'; $('screen').style.display = ''; }
+  if (mode === 'mission') M._web_mission_render(yaw, dist);
+  else if (mode === 'mesh') M._web_render(yaw, zoom);
+  // drive: web_drive_render already wrote the fb in step()
+  const fbPtr = M._web_fb();
+  const fb = heap().subarray(fbPtr, fbPtr + W * H);
+  for (let i = 0; i < W * H; i++) d32[i] = pal32[fb[i]];
+  ctx.putImageData(img, 0, 0);
+}
+
+let simAcc = 0;
+let lastRadio = '';   // radio one-shot dedup (M7)
+let paused = false;
+
+let guidanceLast = 0;
+let radioHideTimer = 0;   // on-screen radio line timeout (H-UAT-015)
+
+function bearingLabel(bearing) {
+  const deg = Math.round(Math.abs(bearing) * 180 / Math.PI);
+  if (deg < 10) return 'AHEAD';
+  return `${bearing > 0 ? 'LEFT' : 'RIGHT'} ${deg}°`;
+}
+
+
+/* One banner line per live objective (H-UAT-014). The line WORDS are the
+ * port's ("NAV GATE", "ESCORT:"); the NAMES are the mission's own FSM
+ * entity labels, verbatim. */
+function objectiveLineText(l) {
+  const label = l.user ? 'NAV GATE'
+                       : `ESCORT: ${(l.label || 'convoy').toUpperCase()}`;
+  return `${label} · ${Math.round(l.dist)} m · ${bearingLabel(l.bearing)}`;
+}
+
+function updateDriveGuidance(p, controlsReady) {
+  const now = performance.now();
+  if (now - guidanceLast < 100) return;
+  guidanceLast = now;
+  const hud = $('objectiveHud');
+  if (!controlsReady) {
+    hud.textContent =
+      'OPENING SEQUENCE · SPACE — skip · controls when camera returns';
+    hud.classList.remove('reached');
+    hud.hidden = false;
+    return;
+  }
+
+  const objective = JSON.parse(M.ccall('web_objective_state', 'string', [], []));
+
+  let text = '';
+  let reached = false;
+  if (objective.live && objective.family === FAM_RACE) {
+    text = `CHECKPOINT ${objective.gate + 1}/${objective.gates} · ` +
+           `${Math.round(objective.dist)} m · ${bearingLabel(objective.bearing)}`;
+  } else if (objective.live && objective.family === FAM_CAPTURE) {
+    text = `${objective.carrying ? 'RETURN FLAG' : 'CAPTURE FLAG'} · ` +
+           `${Math.round(objective.dist)} m · ${bearingLabel(objective.bearing)}`;
+  } else if (objective.live && objective.family === FAM_MELEE) {
+    text = `${objective.opponentsAlive} THREATS · ` +
+           `${objective.kills}/${objective.killTarget} KILLS`;
+  } else {
+    /* Scripted trip: one labeled line per gate the FSM is actually
+     * waiting on, in the engine's stable order — never time-multiplexed
+     * through a single line. The REACHED toast keys on the engine's
+     * genuine-satisfaction edge (a gate the script merely stops polling,
+     * e.g. on a fail branch, never toasts — H-UAT-014). */
+    const trip = JSON.parse(M.ccall('web_objective_lines', 'string', [], []));
+    text = trip.lines.map(objectiveLineText).join('\n');
+    reached = trip.reachedAge >= 0 && trip.reachedAge <= 40;  // 2 s at 20 Hz
+    if (reached) text = `OBJECTIVE REACHED${text ? '\n' + text : ''}`;
+  }
+  hud.textContent = text;
+  hud.classList.toggle('reached', reached);
+  hud.hidden = !text;
+}
+/* On-screen radio text (H-UAT-015): the drive was playing radio VOICE
+ * with no visual trace. Each new line shows speaker + clip while it
+ * plays. The speaker is the mission's own FSM entity label; the clip id
+ * is the authored wav name — the data ships no transcript text, so the
+ * clip id IS the line's authored identity. The timeout is a port
+ * invention. */
+function showRadioLine(msg) {
+  const m = msg.match(/^(?:(.+?):\s+)?([\w\-]+)\.wav$/i);
+  if (!m) return;
+  const el = $('radioHud');
+  el.textContent =
+    `RADIO${m[1] ? ' — ' + m[1].toUpperCase() : ''} · ${m[2].toLowerCase()}`;
+  el.hidden = false;
+  clearTimeout(radioHideTimer);
+  radioHideTimer = setTimeout(() => { el.hidden = true; }, 5000);
+}
+
+function step(dt) {
+  // Shell transition poll (M5): web_shell_update() is the single
+  // drive->debrief transition point (FSM end or ESC); the DOM only
+  // changes when the shell state actually flips.
+  const st = M._web_shell_update();
+  if (st !== shellState) onShellState(st);
+  if (spin && mode !== 'drive') yaw += dt * 0.8;
+  if (paused && mode === 'drive') {
+    /* Keep the last world frame under the escape paper; re-composite so
+     * 6PLYOPT (and friends) stay on the canvas while the sim is frozen. */
+    simAcc = 0;
+    try {
+      M._web_drive_render();
+      blit();
+    } catch (e) { window.__i76.blitErr = String(e && e.stack || e); }
+    window.__i76.frames++;
+    return;
+  }
+  if (mode === 'drive') {
+    // A queued movie owns the screen and the clock: FSM playMovie clips
+    // and shell-queued INT*/OUT* clips alike. Sim ticks stay frozen
+    // until the clip ends or is skipped (ack resumes the wasm side).
+    if (maybePlayMissionMovie() || maybePlayShellMovie()) {
+      simAcc = 0;
+      window.__i76.frames++;
+      return;
+    }
+    simAcc = Math.min(simAcc + dt, 0.25);
+    while (simAcc >= 0.05) {
+      M._web_drive_step();
+      simAcc -= 0.05;
+      if (I76Trial.recording()) {
+        /* One tape line per sim tick that actually ran; the masks are the
+         * engine-consumed values, not the raw page keys (HUMAN-UAT §3). */
+        const tp = JSON.parse(M.ccall('web_drive_pose', 'string', [], []));
+        I76Trial.tick(tp, M._web_drive_input_held(),
+                      M._web_drive_input_pressed());
+      }
+      if (maybePlayMissionMovie() || maybePlayShellMovie()) {
+        simAcc = 0;
+        window.__i76.frames++;
+        return;
+      }
+    }
+    /* Predict from the current 20 Hz pose by the fixed-step remainder, with
+     * collision/cut clamps in C. The dev interp fallback preserves the old
+     * one-tick-late A/B path; sim/input/tapes remain fixed-tick untouched. */
+    M._web_drive_render_alpha_mode(simAcc / 0.05,
+                                   camLerp === 'extrap' ? 1 : 0);
+    /* Consumer-visible state for accessibility/black-box verification; this
+     * exposes no raw Wasm handle and follows the engine's actual toggle. */
+    $('gamePanel').dataset.paper =
+      ['none', 'map', 'notepad'][M._web_paper_active()] || 'none';
+    const controlsReady = !!M._web_drive_can_recover();
+    $('recoverBtn').disabled = !controlsReady;
+    const p = JSON.parse(M.ccall('web_drive_pose', 'string', [], []));
+    const cs = JSON.parse(M.ccall('web_combat_state', 'string', [], []));
+    const radio = M.ccall('web_mission_logic_message', 'string', [], []);
+    updateDriveGuidance(p, controlsReady);
+    // M7 radio one-shots: a NEW radio line plays its wav once
+    // (message format "<owner>: <clip>.wav" or "<clip>.wav"; mission
+    // FAILED/COMPLETE text carries no .wav and is skipped). Every line
+    // that plays is also shown as on-screen text (H-UAT-015).
+    if (radio && radio !== lastRadio) {
+      lastRadio = radio;
+      const m = radio.match(/([\w\-]+\.wav)\s*$/i);
+      if (m) {
+        I76Audio.play(m[1]);
+        showRadioLine(radio);
+      }
+    }
+    // Drive the loop from the simulation's real engine state. The audible
+    // pitch curve remains a browser decision, but no longer invents RPM from
+    // road speed (which was wrong while braking, reversing, or shifting).
+    I76Audio.setEngine(p.rpm, p.throttle > 0.05 ? 1 : 0.3);
+    // Consumer readout: speed, condition, ammo. World coordinates and the
+    // raw radio clip filename are diagnostics and stay in dev mode.
+    $('speedo').textContent =
+      `${(p.speed * 2.237).toFixed(0)} mph · ${p.reverse ? 'R' : 'D'}${p.gear}` +
+      ` · ${p.rpm.toFixed(0)} rpm` +
+      (p.handbrake ? ' · HANDBRAKE' : '') +
+      (cs.hp >= 0 ? ` · hp ${cs.hp}/${cs.hpMax}` : '') +
+      (cs.ammo >= 0 ? ` · ammo ${cs.ammo}` : '') +
+      (!cs.alive && cs.hp >= 0 ? ' · DESTROYED' : '') +
+      (DEV ? ` · x ${p.x.toFixed(0)} z ${p.z.toFixed(0)}` +
+             (radio ? ` · radio: ${radio}` : '') : '');
+  }
+  if (mode === 'menu' || mode === 'briefing') {
+    window.__i76.frames++;   // heartbeat stays live on shell screens
+    return;                  // nothing to blit
+  }
+  try { blit(); } catch (e) { window.__i76.blitErr = String(e && e.stack || e); }
+  window.__i76.frames++;
+}
+
+let rafAlive = false;
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 0.1);
+  last = now;
+  step(dt);
+  requestAnimationFrame(frame);
+}
+
+function startLoop() {
+  // rAF is the right driver in real browsers, but headless/occluded
+  // automation sessions may never fire it — fall back to a fixed-step
+  // interval if rAF hasn't produced a frame shortly after start.
+  requestAnimationFrame((t) => { rafAlive = true; last = t; requestAnimationFrame(frame); });
+  setTimeout(() => {
+    if (!rafAlive) setInterval(() => step(1 / 30), 33);
+  }, 1500);
+}
+
+function showMesh(i) {
+  const sel = $('meshSel');
+  sel.selectedIndex = i;
+  const name = M.ccall('web_mesh_name', 'string', ['number'], [i]);
+  const nv = M._web_load_mesh(i);
+  if (nv < 0) {
+    $('meshInfo').textContent = `${name} — decode failed (not an OEG record?)`;
+    return;
+  }
+  const title = M.ccall('web_mesh_title', 'string', [], []);
+  $('meshInfo').textContent =
+    `${name}  "${title}"  ${nv} verts  ${M._web_num_faces()} faces`;
+  zoom = 1.0;
+}
+
+const cycle = (d) => {
+  const s = $('meshSel');
+  showMesh((s.selectedIndex + d + s.options.length) % s.options.length);
+};
+
+let booted = false;
+
+function buildMeshOptions(n) {
+  const sel = $('meshSel');
+  for (let i = 0; i < n; i++) {
+    const o = document.createElement('option');
+    o.textContent = M.ccall('web_mesh_name', 'string', ['number'], [i]);
+    sel.appendChild(o);
+  }
+}
+
+function syncMissionOptions() {
+  const sel = $('missionSel');
+  sel.innerHTML = '';
+  for (const p of Assets.stagedPaths()) {
+    if (!/\.(cbt|msn|rac|cf\d)$/i.test(p)) continue;
+    const o = document.createElement('option');
+    o.value = p; o.textContent = p;
+    sel.appendChild(o);
+  }
+  const m8 = Assets.stagedCount('miss8'), m16 = Assets.stagedCount('miss16');
+  if (m8 + m16 > 0)
+    $('missionInfo').textContent =
+      `${m8 + m16} mission files staged (${m8} miss8, ${m16} miss16) — pick a mission`;
+}
+
+async function boot() {
+  if (booted || !Assets.ready()) return;
+  booted = true;
+  status('initialising engine…');
+  const n = M._web_init();
+  if (n <= 0) {
+    booted = false;
+    status('VFS init failed — wrong files?');
+    return;
+  }
+  status(`VFS up: ${n} geometry assets.`);
+  refreshPalette();
+  ctx = $('screen').getContext('2d');
+  img = ctx.createImageData(W, H);
+  d32 = new Uint32Array(img.data.buffer);
+  if (DEV) {
+    // The mesh browser and the raw mission dropdown are diagnostics; a
+    // consumer boot does not pay for 442 <option> nodes or a mesh decode.
+    buildMeshOptions(n);
+    const names = [...$('meshSel').options].map(o => o.textContent);
+    const tank = names.indexOf('a4tank1g.pak');
+    showMesh(tank >= 0 ? tank : 0);
+    syncMissionOptions();
+  }
+  /*
+   * Enter the shell through the SAME transition handler the frame loop
+   * uses, rather than hand-building the menu here.
+   *
+   * This used to call refreshShellMenu() directly and leave shellState at
+   * -1, so the loop's first poll saw -1 -> MENU, called onShellState(MENU)
+   * and rebuilt every mission row a frame later. refreshShellMenu() clears
+   * the list with innerHTML = '', so a mousedown that landed on a row
+   * destroyed before its mouseup produced NO CLICK EVENT AT ALL -- the
+   * briefing simply did not open and nothing logged an error. One frame
+   * wide, so a person would almost never hit it; an automated
+   * production-DOM gate hits it immediately, and it cost the verifier a
+   * failed run before it was diagnosed.
+   */
+  onShellState(M._web_shell_state());
+  $('shellPanel').hidden = false;   // the shell is the landing flow (M5)
+  // The intake copy and the manual-pick fallback have done their job.
+  $('assetIntro').hidden = true;
+  $('assetManual').open = false;
+  veilReset();
+  startLoop();
+  maybePlayIntro();
+}
+
+$('loadBtn').onclick = () => boot();
+
+/* Defensive veil reset: a dragenter without its dragleave (observed
+ * under automated file staging) leaves the veil stuck over the page;
+ * any successful stage/load path is a valid reason to force it down. */
+const veilReset = () => { dragDepth = 0; $('dropVeil').hidden = true; };
+
+/* A manual pick carries filenames without their directory, so classify()
+ * only routes what it recognises by NAME. `dir` supplies the directory an
+ * input's label already promises (the campaign file lives in addon/). */
+const stageChosen = async (input, dir = '') => {
+  const files = [...input.files].map(f =>
+    ({ name: f.name, path: dir + f.name, file: f }));
+  if (!files.length) return;
+  status('reading files…');
+  intakeSummary(await Assets.stageFiles(files, stagingProgress));
+  veilReset();
+};
+$('zixFile').onchange = (e) => stageChosen(e.target);
+$('zfsFile').onchange = (e) => stageChosen(e.target);
+$('fntFile').onchange = (e) => stageChosen(e.target);
+$('campFile').onchange = (e) => stageChosen(e.target, 'addon/');
+$('musicFile').onchange = (e) => stageChosen(e.target, 'music/');
+$('movieFile').onchange = (e) => stageChosen(e.target, 'smk/');
+
+// ---- user-supplied Smacker playback -----------------------------------
+// libsmacker decodes in Wasm; this page only expands its indexed frame into
+// ImageData and schedules the decoded PCM on I76Audio's existing context.
+let movieTimer = 0, movieRunning = false, movieName = '';
+// Who is acknowledged when the current clip stops: '' (nobody — the
+// page-owned intro/credits clips), 'mission' (FSM playMovie handoff), or
+// 'shell' (shell-queued INT*/OUT* story clip). Exactly one ack per clip;
+// the decode-failure path in playMovie acks too, so a bad or missing file
+// can never leave the wasm side waiting.
+let movieAck = '';
+
+function stopMovie(error = '') {
+  const acknowledge = movieAck;
+  if (movieTimer) { clearTimeout(movieTimer); movieTimer = 0; }
+  if (movieRunning) M._web_movie_close();
+  movieRunning = false;
+  movieAck = '';
+  I76Audio.stopMovieAudio();
+  $('moviePanel').hidden = true;
+  $('movieNote').textContent = error;
+  if (acknowledge === 'mission') M._web_mission_movie_ack();
+  else if (acknowledge === 'shell') M._web_shell_movie_ack();
+  if (booted) {
+    $('shellPanel').hidden = shellState === SHELL.DRIVE;
+    $('gamePanel').hidden = shellState !== SHELL.DRIVE;
+    I76Audio.setMusicMode(shellState === SHELL.DRIVE ? 'drive' : 'shell');
+  }
+}
+
+function renderMovieFrame() {
+  const w = M._web_movie_width(), h = M._web_movie_height();
+  const pp = M._web_movie_palette(), fp = M._web_movie_pixels();
+  if (!(w > 0 && h > 0 && pp && fp)) return false;
+  const pal = M.HEAPU8.subarray(pp, pp + 256 * 3);
+  const pix = M.HEAPU8.subarray(fp, fp + w * h);
+  const canvas = $('movieScreen');
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w; canvas.height = h;
+  }
+  const c = canvas.getContext('2d');
+  const frame = c.createImageData(w, h);
+  const dst = frame.data;
+  for (let i = 0, d = 0; i < pix.length; i++, d += 4) {
+    const p = pix[i] * 3;
+    dst[d] = pal[p]; dst[d + 1] = pal[p + 1]; dst[d + 2] = pal[p + 2];
+    dst[d + 3] = 255;
+  }
+  c.putImageData(frame, 0, 0);
+
+  const size = M._web_movie_audio_size();
+  const ap = M._web_movie_audio();
+  if (size > 0 && ap)
+    I76Audio.playPcm(M.HEAPU8.slice(ap, ap + size),
+                     M._web_movie_audio_rate(),
+                     M._web_movie_audio_channels(),
+                     M._web_movie_audio_depth());
+  return true;
+}
+
+function movieTick() {
+  if (!movieRunning) return;
+  if (!renderMovieFrame()) { stopMovie('cutscene decode failed'); return; }
+  const frame = M._web_movie_frame_index();
+  const count = M._web_movie_frame_count();
+  $('movieNote').textContent = `${frame + 1} / ${count}`;
+  if (frame + 1 >= count) { stopMovie(); return; }
+  if (M._web_movie_advance() < 0) {
+    stopMovie('cutscene decode failed');
+    return;
+  }
+  movieTimer = setTimeout(movieTick, Math.max(1, M._web_movie_frame_ms()));
+}
+
+function playMovie(name, ack = '') {
+  stopMovie();
+  movieName = String(name || '');
+  if (!movieName || M.ccall('web_movie_open', 'number', ['string'],
+                            [`smk/${movieName}`]) !== 0) {
+    const error = `cannot decode ${movieName || 'cutscene'}`;
+    $('movieNote').textContent = error;
+    // An undecodable clip is acknowledged immediately: the wasm side
+    // (mission FSM or shell) is waiting on exactly one ack to resume.
+    if (ack === 'mission') {
+      $('missionInfo').textContent = error;
+      M._web_mission_movie_ack();
+    } else if (ack === 'shell') {
+      M._web_shell_movie_ack();
+    }
+    return false;
+  }
+  movieAck = ack;
+  movieRunning = true;
+  $('movieTitle').textContent = movieName;
+  $('shellPanel').hidden = true;
+  $('gamePanel').hidden = true;
+  $('moviePanel').hidden = false;
+  I76Audio.setMusicMode(null);
+  movieTick();
+  return true;
+}
+
+function maybePlayMissionMovie() {
+  if (movieRunning) return movieAck === 'mission';
+  const name = M.ccall('web_mission_movie_pending', 'string', [], []);
+  if (!name) return false;
+  I76Trial.event('movie', { clip: name });
+  playMovie(name, 'mission');
+  return true;
+}
+
+// Shell-queued story clips (base Trip INT*/OUT*): same player, same
+// acknowledge-once lifecycle, but the ack goes to the shell queue the
+// debrief transition is waiting on (web_shell_update).
+function maybePlayShellMovie() {
+  if (movieRunning) return movieAck === 'shell';
+  const name = M.ccall('web_shell_movie_pending', 'string', [], []);
+  if (!name) return false;
+  I76Trial.event('movie', { clip: name, shell: true });
+  playMovie(name, 'shell');
+  return true;
+}
+
+function introName() {
+  const tracks = Assets.movieTracks();
+  return tracks.find((n) => /^intro.*\.smk$/i.test(n)) || '';
+}
+// Both retail products ship exactly CREDF01.SMK; the find keeps any
+// purchaser-staged cred*.smk spelling instead of pinning one case.
+function creditsName() {
+  const tracks = Assets.movieTracks();
+  return tracks.find((n) => /^cred.*\.smk$/i.test(n)) || '';
+}
+function maybePlayIntro() {
+  const name = introName();
+  $('introBtn').hidden = !name;
+  if (name) playMovie(name);
+}
+$('introBtn').onclick = () => { const name = introName(); if (name) playMovie(name); };
+$('movieSkipBtn').onclick = () => stopMovie();
+window.addEventListener('keydown', (e) => {
+  if (!movieRunning || !['Escape', ' ', 'Enter'].includes(e.key)) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  stopMovie();
+}, true);
+
+$('meshSel').onchange = (e) => showMesh(e.target.selectedIndex);
+$('prevBtn').onclick = () => cycle(-1);
+$('nextBtn').onclick = () => cycle(1);
+// Mesh-browser keys. Space toggling the mesh spin used to live OUTSIDE
+// the mesh-mode guard, on the very key pushKey sends as PK_SPACE (fire),
+// so firing during a mission also toggled a diagnostic. Both are dev-only
+// and mesh-mode-only now.
+if (DEV)
+  window.addEventListener('keydown', (e) => {
+    if (mode !== 'mesh') return;
+    if (e.key === 'ArrowLeft') cycle(-1);
+    else if (e.key === 'ArrowRight') cycle(1);
+    else if (e.key === ' ') { spin = !spin; e.preventDefault(); }
+  });
+
+// ---- M5 shell: menu -> briefing -> drive -> debrief ---------------------
+// Mirrors the wasm state machine (web_shell_*). The frame loop polls
+// web_shell_update() each step; DOM changes happen only on state flips.
+const SHELL = { MENU: 0, BRIEFING: 1, DRIVE: 2, DEBRIEF: 3, CREDITS: 4 };
+let shellState = -1;
+
+// ---- the campaign: four trips read from addon/SCENARIO.DAT --------------
+const camp = {
+  trips:  ()     => M._web_campaign_trip_count(),
+  trip:   (t)    => M.ccall('web_campaign_trip_name', 'string', ['number'], [t]),
+  count:  (t)    => M._web_campaign_mission_count(t),
+  title:  (t, i) => M.ccall('web_campaign_mission_title', 'string',
+                            ['number', 'number'], [t, i]),
+  path:   (t, i) => M.ccall('web_campaign_mission_path', 'string',
+                            ['number', 'number'], [t, i]),
+  staged: (t, i) => M._web_campaign_mission_staged(t, i) === 1,
+};
+
+/*
+ * The arena: the race and capture maps, which addon/SCENARIO.DAT does not
+ * list.
+ *
+ * They were absent from the consumer menu for a good reason — an FSM-less
+ * mission had no objective controller, so offering one would have handed
+ * the player a mission with no ending. mission.c's controllers retire that
+ * reason for .RAC, for .CF2/.CF3/.CF4 and now for .CBT, and web_arena_* is
+ * the list; web_arena_family says which tab a row belongs on.
+ *
+ * MELEE is the newest of the three and it is the one that needed opponents
+ * before it could be offered: no .CBT file contains a single vehicle, so
+ * mission.c D-O14 spawns them into the map's own empty grid slots, the way
+ * the original's SpawnLoc module filled them from the network session.
+ * The tab is labelled "Combat" because that is nitshell.dll's own name for
+ * the mode, sitting beside "Race" and "2/3/4 Team C.T.F." in one list.
+ */
+const arena = {
+  count:  ()  => M._web_arena_count(),
+  name:   (i) => M.ccall('web_arena_name', 'string', ['number'], [i]),
+  path:   (i) => M.ccall('web_arena_path', 'string', ['number'], [i]),
+  family: (i) => M._web_arena_family(i),
+};
+// mission.h MISSION_FAMILY_*; the tab ids are their negatives so they
+// cannot collide with a trip index.
+const FAM_MELEE = 1, FAM_RACE = 2, FAM_CAPTURE = 3;
+const ARENA_TABS = [
+  { id: -1, family: FAM_RACE,    label: 'Race' },
+  { id: -2, family: FAM_CAPTURE, label: 'Capture' },
+  { id: -3, family: FAM_MELEE,   label: 'Combat' },
+];
+const arenaTab = (id) => ARENA_TABS.find((t) => t.id === id) || null;
+const arenaIndices = (family) => {
+  const out = [];
+  for (let i = 0; i < arena.count(); i++)
+    if (arena.family(i) === family) out.push(i);
+  return out;
+};
+
+/*
+ * Browser-owned rules for the port's local arena controllers. The mission
+ * files contain no rules record. nitshell.dll verifies the vocabulary, but
+ * not these ranges, defaults, or single-player semantics; keep that
+ * provenance explicit rather than presenting invented values as original.
+ */
+const LAP_CHOICES = [1, 2, 3, 5];
+const CAPTURE_CHOICES = [1, 2, 3, 5];
+// The engine clamps kills to the opponents the selected map fielded.
+const KILL_CHOICES = [1, 2, 3];
+const LIMIT_CHOICES = [                 // minutes; 0 = no limit
+  [0, 'No Limits!'], [1, '1 Minute'], [2, '2 Minutes'],
+  [5, '5 Minutes'], [10, '10 Minutes'], [20, '20 Minutes'],
+];
+
+function arenaRules() {
+  const a = progress.prefs.arena || {};
+  return {
+    laps: LAP_CHOICES.includes(a.laps) ? a.laps : 1,
+    captures: CAPTURE_CHOICES.includes(a.captures) ? a.captures : 1,
+    kills: KILL_CHOICES.includes(a.kills) ? a.kills : 1,
+    minutes: LIMIT_CHOICES.some(([v]) => v === a.minutes) ? a.minutes : 10,
+  };
+}
+
+function pushArenaRules() {
+  const r = arenaRules();
+  M._web_shell_set_rules(r.laps, r.captures, r.kills, r.minutes);
+  return r;
+}
+
+function buildArenaRules() {
+  const laps = $('lapsSel'), caps = $('capsSel'), kills = $('killsSel'),
+        limit = $('limitSel');
+  if (!laps.options.length) {
+    const fill = (sel, values, word) => {
+      for (const v of values) {
+        const o = document.createElement('option');
+        o.value = String(v);
+        o.textContent = `${v} ${word}${v === 1 ? '' : 's'}`;
+        sel.appendChild(o);
+      }
+    };
+    fill(laps, LAP_CHOICES, 'Lap');
+    fill(caps, CAPTURE_CHOICES, 'Capture');
+    fill(kills, KILL_CHOICES, 'Kill');
+    for (const [v, label] of LIMIT_CHOICES) {
+      const o = document.createElement('option');
+      o.value = String(v); o.textContent = label;
+      limit.appendChild(o);
+    }
+    const onChange = () => {
+      progress.prefs.arena = {
+        laps: Number(laps.value), captures: Number(caps.value),
+        kills: Number(kills.value), minutes: Number(limit.value),
+      };
+      pushArenaRules();
+      Save.touch();
+      // The briefing quotes the rules, so the menu signature has to move
+      // when they do or the arena rows would not re-render.
+      refreshShellMenu();
+    };
+    laps.onchange = onChange;
+    caps.onchange = onChange;
+    kills.onchange = onChange;
+    limit.onchange = onChange;
+  }
+  const r = pushArenaRules();
+  laps.value = String(r.laps);
+  caps.value = String(r.captures);
+  kills.value = String(r.kills);
+  limit.value = String(r.minutes);
+
+  // Only the control that governs the visible tab is shown: a lap target
+  // means nothing on a capture map and a capture target means nothing on
+  // a race, and offering both invites a player to set the one that is
+  // ignored. The clock governs both, so it always shows.
+  const t = arenaTab(selTrip);
+  const race = !!t && t.family === FAM_RACE;
+  const ctf = !!t && t.family === FAM_CAPTURE;
+  const melee = !!t && t.family === FAM_MELEE;
+  $('lapsLbl').hidden = laps.hidden = !race;
+  $('capsLbl').hidden = caps.hidden = !ctf;
+  $('killsLbl').hidden = kills.hidden = !melee;
+}
+
+/*
+ * Campaign progress. `completed` holds mission PATHS, not indices, so it
+ * survives a campaign file that lists missions in a different order.
+ *
+ * BASE RETAIL UNLOCK (oracle-confirmed): i76shell.dll keeps one Trip scene
+ * scalar. Starting the next successful Trip increments it and formats
+ * t%2.2d.msn; Save Bookmark writes the same scalar as the first dword of
+ * each 60-byte savegame.dir entry. The base Trip therefore unlocks in strict
+ * T01..T17 order. Training, Auto Melee and Instant Melee come from separate
+ * fixed shell tables and are all available immediately.
+ *
+ * Nitro remains open for now. Its 19 missions have not had the equivalent
+ * nitshell.dll completion/save trace, so applying the base shell's one-Trip
+ * rule to four independent character trips would be another guess.
+ */
+const isDone = (p) => progress.completed.includes(p);
+// First not-yet-completed mission of a trip: the one the trip resumes at.
+function tripNext(t) {
+  for (let i = 0; i < camp.count(t); i++)
+    if (!isDone(camp.path(t, i))) return i;
+  return -1;
+}
+
+const isBaseStory = (t) =>
+  Assets.archiveProfile() === 'base' && camp.trip(t) === 'Trip';
+
+function campaignMissionAvailable(t, i, staged) {
+  if (!staged) return false;
+  if (!isBaseStory(t)) return true;
+  const next = tripNext(t);
+  return next < 0 || i <= next || isDone(camp.path(t, i));
+}
+
+let selTrip = 0;
+
+/*
+ * The rendered signature of the menu, so an unchanged menu is not re-rendered.
+ *
+ * refreshShellMenu is called by several legitimate things — picking a trip,
+ * finishing a mission, resetting progress, and a LATE ASSET-INTAKE CALLBACK
+ * that lands ~120 ms after boot when the last mission files finish staging.
+ * All of them used to clear the list with innerHTML = '' and rebuild it.
+ *
+ * That is fine until a player is mid-click. A mousedown that lands on a row
+ * destroyed before its mouseup produces NO CLICK EVENT AT ALL: no error, no
+ * log, the briefing simply does not open. Rebuilding is not the bug; rebuilding
+ * when NOTHING CHANGED is, and the intake callback changes nothing at all.
+ *
+ * Keyed on everything the rows display, so any real change still re-renders.
+ */
+let menuSig = null;
+
+function refreshShellMenu() {
+  M._web_campaign_refresh();
+  buildGarage();             // restore the saved chassis before any entry form     // more files may have been staged since
+  M._web_arena_refresh();
+  const n = camp.trips(), an = arena.count();
+  const row = $('tripRow'), list = $('missionList');
+
+  // Which arena tabs have any maps staged at all. A partial stage can
+  // leave one or both empty, and a missing campaign file leaves no trips.
+  const tabRows = new Map(
+    ARENA_TABS.map((t) => [t.id, arenaIndices(t.family)]));
+  const arenaRowsFor = (id) => tabRows.get(id) || [];
+
+  // Clamp the selected tab to one that exists.
+  const firstArenaTab = ARENA_TABS.find((t) => arenaRowsFor(t.id).length);
+  if (arenaTab(selTrip) && !arenaRowsFor(selTrip).length)
+    selTrip = firstArenaTab ? firstArenaTab.id : 0;
+  if (!arenaTab(selTrip) && selTrip >= n)
+    selTrip = firstArenaTab ? firstArenaTab.id : 0;
+
+  const tabNow = arenaTab(selTrip);
+  const rules = arenaRules();
+  const sig = JSON.stringify(
+    tabNow
+    ? ['arena', tabNow.id, rules.laps, rules.captures, rules.kills,
+       rules.minutes,
+       arenaRowsFor(selTrip).map((i) =>
+         [arena.name(i), arena.path(i), lastOutcome(arena.path(i))])]
+    : n === 0
+    ? ['flat', M._web_shell_mission_count(), an,
+       Object.keys(progress.results).length, progress.completed.length]
+    : ['camp', n, an, selTrip,
+       Array.from({ length: camp.count(selTrip) }, (_, i) => {
+         const path = camp.path(selTrip, i);
+         return [camp.title(selTrip, i), path, camp.staged(selTrip, i),
+                 isDone(path), lastOutcome(path)];
+       })]);
+  if (sig === menuSig) return;
+  menuSig = sig;
+
+  row.innerHTML = '';
+  list.innerHTML = '';
+  buildArenaRules();
+  $('arenaRules').hidden = !tabNow;
+  $('menuTitle').textContent = tabNow ? tabNow.label : 'Scenarios';
+
+  // Tabs: the campaign's trips, then the arena modes. Built for every
+  // branch below, including the no-campaign-file fallback — a player with
+  // the arena maps staged but no SCENARIO.DAT still gets them.
+  const tab = (label, id) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.setAttribute('aria-pressed', String(id === selTrip));
+    b.onclick = () => {
+      selTrip = id;
+      M._web_shell_menu();
+      menuSig = null;
+      onShellState(SHELL.MENU);
+    };
+    row.appendChild(b);
+  };
+  for (let t = 0; t < n; t++) tab(camp.trip(t).replace(/_/g, ' '), t);
+  for (const t of ARENA_TABS)
+    if (arenaRowsFor(t.id).length) tab(t.label, t.id);
+
+  if (tabNow) {
+    const idx = arenaRowsFor(selTrip);
+    idx.forEach((i, k) => {
+      const path = arena.path(i);
+      const el = missionRow(String(k + 1), arena.name(i),
+                            isDone(path) ? 'completed' : '',
+                            lastOutcome(path), true,
+                            () => M._web_shell_pick_arena(i));
+      if (isDone(path)) el.classList.add('done');
+      list.appendChild(el);
+    });
+    const what = tabNow.family === FAM_CAPTURE ? 'capture map'
+               : tabNow.family === FAM_MELEE ? 'combat arena' : 'race';
+    $('menuNote').textContent =
+      `${idx.length} ${what}${idx.length === 1 ? '' : 's'} from the Nitro ` +
+      'Pack.' + (tabNow.family === FAM_MELEE
+        ? ' Opponents use the map grid slots and local arena rules.' : '');
+    $('saveNote').textContent = Save.notice();
+    $('saveNote').hidden = !Save.notice();
+    $('resetProgressBtn').hidden =
+      !progress.completed.length && !Object.keys(progress.results).length;
+    return;
+  }
+
+  if (n === 0) {
+    // Designed fallback: the campaign file was not staged. Everything the
+    // engine found is still playable, just without trips or titles.
+    $('menuNote').textContent =
+      'No campaign file (addon/SCENARIO.DAT) in the staged folder — ' +
+      'showing every mission found instead of the four trips.';
+    const total = M._web_shell_mission_count();
+    for (let i = 0; i < total; i++) {
+      const name = M.ccall('web_shell_mission_name', 'string', ['number'], [i]);
+      list.appendChild(missionRow(String(i + 1), name, '', lastOutcome(name),
+                                  true, () => M._web_shell_pick(i)));
+    }
+    return;
+  }
+
+  const next = tripNext(selTrip);
+  const baseStory = isBaseStory(selTrip);
+  let missing = 0;
+  for (let i = 0; i < camp.count(selTrip); i++) {
+    const path = camp.path(selTrip, i), staged = camp.staged(selTrip, i);
+    if (!staged) missing++;
+    const done = isDone(path);
+    const available = campaignMissionAvailable(selTrip, i, staged);
+    const mark = !staged ? 'not staged' : !available ? 'locked'
+               : done ? 'completed' : i === next ? 'next' : '';
+    const el = missionRow(String(i + 1), camp.title(selTrip, i), mark,
+                          done ? '' : lastOutcome(path), available,
+                          () => M._web_shell_pick_campaign(selTrip, i));
+    if (done) el.classList.add('done');
+    if (available && !done && i === next) el.classList.add('next');
+    list.appendChild(el);
+  }
+  $('menuNote').textContent = missing
+    ? `${missing} mission file(s) of this trip are not staged — ` +
+      'drop the whole game folder to get them all.'
+    : next < 0 ? 'Every mission of this trip is complete.'
+    : baseStory ? `Complete ${camp.title(selTrip, next)} to unlock the next Trip.`
+    : Assets.archiveProfile() === 'base'
+      ? 'Base training and melee scenarios are available immediately; ' +
+        'only Trip advances saved progression.'
+      : 'Pick a mission to read its briefing.';
+  $('saveNote').textContent = Save.notice();
+  $('saveNote').hidden = !Save.notice();
+  // Only offered once there is something to lose.
+  $('resetProgressBtn').hidden =
+    !progress.completed.length && !Object.keys(progress.results).length;
+}
+
+$('resetProgressBtn').onclick = async () => {
+  if (!confirm('Erase recorded campaign progress and start over?')) return;
+  await Save.reset();   // clears `progress` in place; same object
+  refreshShellMenu();
+};
+
+/*
+ * Original-style shell garage.
+ *
+ * The shell is a pair of dedicated game forms: Scenario/Driver Entry and
+ * Chassis Configuration. Selecting a mission opens its entry form; Configure
+ * Chassis enters the second form and DONE returns to the same mission.
+ */
+let garageLastInfo = null;
+let garageReturnVcf = '';
+let garageReturnInfo = null;
+
+function garageBlit(canvas = $('garageCanvas')) {
+  if (!canvas || !M) return;
+  /* Authored database.tvf portraits resize #garageCanvas to 176x176. Custom
+   * mission VCFs (P09 p09rm01) have no fixed shell portrait and deliberately
+   * fall back to the 640x480 mesh render. Restore that render target before
+   * copying it; otherwise the centered car is clipped outside the old
+   * portrait-sized canvas and the form appears blank (H-UAT-071a). */
+  if (canvas.width !== 640) canvas.width = 640;
+  if (canvas.height !== 480) canvas.height = 480;
+  const ctx = canvas.getContext('2d');
+  const fb = new Uint8Array(M.HEAPU8.buffer, M._web_fb(), 640 * 480);
+  const pal = new Uint8Array(M.HEAPU8.buffer, M._web_palette(), 768);
+  const img = ctx.createImageData(640, 480);
+  for (let i = 0, p = 0; i < 640 * 480; i++, p += 4) {
+    const idx = fb[i] * 3;
+    img.data[p] = pal[idx];
+    img.data[p + 1] = pal[idx + 1];
+    img.data[p + 2] = pal[idx + 2];
+    img.data[p + 3] = fb[i] ? 210 : 0;
+  }
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.putImageData(img, 0, 0);
+}
+
+function garageInfo(vcf) {
+  if (!vcf) return null;
+  try {
+    const info = JSON.parse(M.ccall('web_garage_info', 'string',
+                                    ['string'], [vcf]) || '{}');
+    return info.ok ? info : null;
+  } catch { return null; }
+}
+
+function garagePreview(vcf, canvas = $('garageCanvas')) {
+  const ctx = canvas?.getContext('2d');
+  ctx?.clearRect(0, 0, 640, 480);
+  if (!vcf) return -1;
+  const geo = M.ccall('web_garage_preview', 'number',
+                      ['string', 'number'], [vcf, -0.78]);
+  if (geo >= 0) garageBlit(canvas);
+  return geo;
+}
+
+let shellArt;
+function loadShellArt() {
+  if (shellArt !== undefined) return shellArt;
+  const bytes = Assets.readStaged('database.tvf');
+  const vehicles = Assets.readStaged('nitcar.def');
+  shellArt = bytes && vehicles ? ShellArt.open(bytes, vehicles) : null;
+  return shellArt;
+}
+
+function drawShellShape(canvas, shape) {
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!shape) return false;
+  canvas.width = shape.width;
+  canvas.height = shape.height;
+  ctx.putImageData(new ImageData(shape.rgba, shape.width, shape.height), 0, 0);
+  return true;
+}
+
+function entryPortrait(vcf) {
+  const art = loadShellArt();
+  const index = art?.vehicleIndex(vcf) ?? -1;
+  const shown = !!art && index >= 0 &&
+    drawShellShape($('entryVehicleFrontCanvas'), art.side.shape(index * 2)) &&
+    drawShellShape($('entryVehicleSideCanvas'), art.side.shape(index * 2 + 1));
+  $('entryVehiclePortraits').hidden = !shown;
+  $('entryVehicleCanvas').hidden = shown;
+  return shown;
+}
+
+function chassisPortrait(vcf) {
+  const art = loadShellArt();
+  const index = art?.vehicleIndex(vcf) ?? -1;
+  const shown = !!art && index >= 0 &&
+    drawShellShape($('garageCanvas'), art.chassis.shape(index));
+  if (!shown) garagePreview(vcf);
+  return shown;
+}
+
+function buildGarage() {
+  const sel = $('garageSel');
+  if (sel.options.length) return;
+  for (let i = 0; i < M._web_veh_count(); i++) {
+    const model = M.ccall('web_veh_model', 'string', ['number'], [i]);
+    const title = M.ccall('web_veh_title', 'string', ['number'], [i]) || model;
+    const n = M._web_veh_variants(i);
+    for (let v = 1; v <= n; v++) {
+      const vcf = M.ccall('web_veh_vcf', 'string',
+                          ['number', 'number'], [i, v]);
+      if (!vcf) continue;
+      const o = document.createElement('option');
+      o.value = vcf;
+      o.textContent = n > 1 ? `${title} · ${v}` : title;
+      sel.appendChild(o);
+    }
+  }
+  sel.value = progress.garage.vcf;
+  if (sel.selectedIndex >= 0)
+    M.ccall('web_shell_set_vehicle', null, ['string'], [progress.garage.vcf]);
+  if (sel.selectedIndex < 0 && sel.options.length) {
+    /* A profile can outlive the archive it was configured against. The
+     * shell always owns a car (native nituser.mel semantics): re-seed to
+     * the fresh-profile default chassis, or the first catalog entry. */
+    let i = sel.options.findIndex?.((o) => /valepre/i.test(o.value)) ?? -1;
+    if (!Array.isArray(sel.options)) {
+      i = -1;
+      for (let k = 0; k < sel.options.length; k++)
+        if (/valepre/i.test(sel.options[k].value)) { i = k; break; }
+    }
+    sel.selectedIndex = i >= 0 ? i : 0;
+    progress.garage.vcf = sel.options[sel.selectedIndex].value;
+    M.ccall('web_shell_set_vehicle', null, ['string'], [progress.garage.vcf]);
+    Save.touch();
+  }
+}
+
+const addConfigRow = (dl, label, value) => {
+  const dt = document.createElement('dt'); dt.textContent = label;
+  const dd = document.createElement('dd'); dd.textContent = value || 'Empty';
+  dl.append(dt, dd);
+};
+
+function renderGarageForm(info) {
+  garageLastInfo = info;
+  if (!info) {
+    const empty = ['garageVariant', 'garageEngine', 'garageSuspension',
+                   'garageBrakes', 'garageTireFR', 'garageTireFL',
+                   'garageTireMR', 'garageTireML', 'garageTireRR',
+                   'garageTireRL', 'garagePaint', 'garageWeight',
+                   'garageAvailable'];
+    empty.forEach((id) => { $(id).textContent = ''; });
+    $('garageWeapons').replaceChildren();
+    $('garageSpecials').replaceChildren();
+    $('garageDefense').replaceChildren();
+    $('garageCanvas').getContext('2d').clearRect(0, 0, 640, 480);
+    $('garageNote').textContent = 'Selected chassis could not be loaded.';
+    return;
+  }
+  $('garageVariant').textContent = info.variant || '';
+  $('garageEngine').textContent = info.engine || '';
+  $('garageSuspension').textContent = info.suspension || '';
+  $('garageBrakes').textContent = info.brakes || '';
+  const tires = info.wheels || [];
+  $('garageTireFR').textContent = tires[0] || tires[2] || '';
+  $('garageTireFL').textContent = tires[0] || tires[2] || '';
+  $('garageTireMR').textContent = tires[1] || 'Not fitted';
+  $('garageTireML').textContent = tires[1] || 'Not fitted';
+  $('garageTireRR').textContent = tires[2] || tires[0] || '';
+  $('garageTireRL').textContent = tires[2] || tires[0] || '';
+  $('garagePaint').textContent = info.paint || info.vtf || '';
+  $('garageWeight').textContent = Math.round(info.weight || 0);
+  $('garageAvailable').textContent = ((info.left || 0) / 10).toFixed(1);
+
+  const weapons = $('garageWeapons'); weapons.replaceChildren();
+  (info.weapons || []).forEach((w, i) => {
+    const where = w.rear ? `#${i + 1} Rear` : `#${i + 1} Top`;
+    addConfigRow(weapons, where, w.name);
+  });
+  addConfigRow(weapons, 'Hand', '.45 Cal');
+
+  const specials = $('garageSpecials'); specials.replaceChildren();
+  const sp = info.specials || [];
+  for (let i = 0; i < Math.max(3, sp.length); i++)
+    addConfigRow(specials, `Special ${i + 1}`, sp[i] || 'Empty');
+
+  const defense = $('garageDefense'); defense.replaceChildren();
+  const labels = ['Front', 'Right', 'Left', 'Rear'];
+  const order = [0, 2, 1, 3];
+  for (const [row, src] of order.entries()) {
+    const line = document.createElement('div');
+    const name = document.createElement('b'); name.textContent = labels[row];
+    const armor = document.createElement('span');
+    armor.textContent = ((info.armor?.[src] || 0) / 10).toFixed(1);
+    const chassis = document.createElement('span');
+    chassis.textContent = ((info.chassisDefense?.[src] || 0) / 10).toFixed(1);
+    line.append(name, armor, chassis); defense.appendChild(line);
+  }
+
+  const authored = chassisPortrait(info.vcf);
+  $('garageNote').textContent = DEV
+    ? `${info.vcf} · ${authored ? 'authored shell portrait' : 'mesh fallback'}` : '';
+}
+
+function garageChoose(vcf, { persist = true } = {}) {
+  buildGarage();
+  const sel = $('garageSel');
+  sel.value = vcf;
+  if (sel.selectedIndex < 0 && sel.options.length) sel.selectedIndex = 0;
+  const chosen = sel.value;
+  /* onchange may fire outside the dedicated form (automation, restored
+   * native select state). Treat that as an immediate committed choice; the
+   * visible form still stages until DONE. */
+  if (persist && $('shellGarage').hidden) {
+    progress.garage.vcf = chosen;
+    M.ccall('web_shell_set_vehicle', null, ['string'], [chosen]);
+    Save.touch();
+  }
+  const info = garageInfo(chosen);
+  $('garageDoneBtn').disabled = !chosen || !info;
+  if (persist) {
+    /* Configuration is staged until DONE, like the retail form. */
+    garageLastInfo = info;
+  }
+  renderGarageForm(info);
+  return chosen;
+}
+
+function garageStep(dir) {
+  const sel = $('garageSel');
+  if (!sel.options.length) return;
+  let i;
+  if (sel.selectedIndex < 0) i = dir > 0 ? 0 : sel.options.length - 1;
+  else i = sel.selectedIndex + dir;
+  if (i < 0) i = sel.options.length - 1;
+  if (i >= sel.options.length) i = 0;
+  garageChoose(sel.options[i].value);
+}
+
+function entryVehicle() {
+  const override = progress.garage.vcf;
+  const authored = M.ccall('web_shell_mission_vehicle', 'string', [], []) || '';
+  return override || authored;
+}
+
+function refreshEntryForm() {
+  if ($('shellBrief').hidden) return;
+  const vcf = entryVehicle();
+  const info = garageInfo(vcf);
+  garageReturnInfo = info;
+  $('entryDriver').textContent = M._web_shell_trip() >= 0
+    ? camp.trip(M._web_shell_trip()).replace(/_/g, ' ') : 'Driver';
+  $('garageNow').textContent = info?.chassis ||
+    (vcf ? `Unavailable: ${vcf}` : 'Scenario vehicle unavailable');
+  $('entryVariant').textContent = info?.variant || '';
+  $('openGarageBtn').disabled = false;
+  $('entryWeapons').replaceChildren();
+  $('entryParts').replaceChildren();
+  for (const w of info?.weapons || []) {
+    const line = document.createElement('span'); line.textContent = w.name;
+    $('entryWeapons').appendChild(line);
+  }
+  for (const p of [info?.engine, info?.suspension, info?.brakes,
+                   ...(info?.wheels || []).filter(Boolean)]) {
+    if (!p) continue;
+    const line = document.createElement('span'); line.textContent = p;
+    $('entryParts').appendChild(line);
+  }
+  if (vcf && !entryPortrait(vcf)) garagePreview(vcf, $('entryVehicleCanvas'));
+  else if (!vcf) {
+    $('entryVehiclePortraits').hidden = true;
+    $('entryVehicleCanvas').hidden = false;
+    $('entryVehicleCanvas').getContext('2d').clearRect(0, 0, 640, 480);
+  }
+  /* The canvas has copied the line art. Return global palette/dyn state to
+   * the ordinary renderer before ENTER AREA can load a mission. */
+  M._web_garage_release();
+}
+
+function garageClearForm(note) {
+  garageLastInfo = null;
+  for (const id of ['garageVariant', 'garageEngine', 'garageSuspension',
+                    'garageBrakes', 'garageTireFR', 'garageTireFL',
+                    'garageTireMR', 'garageTireML', 'garageTireRR',
+                    'garageTireRL', 'garagePaint',
+                    'garageWeight', 'garageAvailable']) $(id).textContent = '';
+  $('garageWeapons').replaceChildren();
+  $('garageSpecials').replaceChildren();
+  $('garageDefense').replaceChildren();
+  $('garageCanvas').getContext('2d').clearRect(0, 0, 640, 480);
+  $('garageNote').textContent = note || '';
+}
+
+function garageUseMissionVehicle() {
+  const authored = M.ccall('web_shell_mission_vehicle', 'string', [], []) || '';
+  const sel = $('garageSel');
+  if (!authored) {
+    garageClearForm('This scenario does not name a chassis.');
+    $('garageDoneBtn').disabled = true;
+    return;
+  }
+  const info = garageInfo(authored);
+  if (!info) {
+    sel.selectedIndex = -1;
+    garageClearForm(`Mission chassis ${authored} is unavailable.`);
+    $('garageDoneBtn').disabled = true;
+    return;
+  }
+  /* Add-on/scripted missions may name a loadable VCF outside the original
+   * shell's fixed catalog. Render that exact authored vehicle; never coerce
+   * it to option zero merely because the retail list did not include it. */
+  sel.value = authored;
+  if (sel.selectedIndex < 0) sel.selectedIndex = -1;
+  renderGarageForm(info);
+  $('garageDoneBtn').disabled = false;
+  /* DONE persists this authored chassis into the profile — the native
+   * analog of owning the car the mission names. */
+}
+
+function openGarage() {
+  buildGarage();
+  garageReturnVcf = progress.garage.vcf;
+  const vcf = entryVehicle();
+  const sel = $('garageSel');
+
+  sel.value = vcf;
+  const info = garageInfo(vcf);
+  if (info) {
+    /* The authored VCF can be valid even when absent from the fixed retail
+     * catalog; preserve selectedIndex=-1 while rendering that exact car. */
+    if (sel.selectedIndex < 0) sel.selectedIndex = -1;
+    renderGarageForm(info);
+    $('garageDoneBtn').disabled = false;
+  } else {
+    sel.selectedIndex = -1;
+    garageClearForm(`Chassis ${vcf} could not be loaded.`);
+    $('garageDoneBtn').disabled = true;
+  }
+  shellShow('shellGarage');
+}
+
+function closeGarage(commit) {
+  if (commit) {
+    progress.garage.vcf = $('garageSel').value;
+    M.ccall('web_shell_set_vehicle', null, ['string'], [progress.garage.vcf]);
+    Save.flush();
+  } else {
+    progress.garage.vcf = garageReturnVcf;
+    M.ccall('web_shell_set_vehicle', null, ['string'], [garageReturnVcf]);
+  }
+  M._web_garage_release();
+  shellShow('shellMenu');
+  $('entryEmpty').hidden = true;
+  $('shellBrief').hidden = false;
+  refreshEntryForm();
+}
+
+$('garageSel').onchange = (e) => {
+  garageChoose(e.target.value);
+};
+$('garagePrevBtn').onclick = () => garageStep(-1);
+$('garageNextBtn').onclick = () => garageStep(1);
+$('openGarageBtn').onclick = openGarage;
+$('garageMissionBtn').onclick = garageUseMissionVehicle;
+$('garageDoneBtn').onclick = () => {
+  if (!$('garageDoneBtn').disabled) closeGarage(true);
+};
+$('garageCancelBtn').onclick = () => closeGarage(false);
+$('assetFilesBtn').onclick = () => {
+  $('assetPanel').hidden = false;
+  $('assetPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+
+/* The stored outcome of the last run of a mission, as a player-facing
+ * phrase. This is what a reload has to bring back. */
+function lastOutcome(path) {
+  const r = progress.results[path];
+  if (!r) return '';
+  return `last: ${r.result} · ${(r.timeS || 0).toFixed(0)} s`;
+}
+
+function missionRow(num, name, mark, last, enabled, onPick) {
+  const b = document.createElement('button');
+  b.className = 'missionRow';
+  b.disabled = !enabled;
+  const n = document.createElement('span');
+  n.className = 'num'; n.textContent = num;
+  const t = document.createElement('span');
+  t.className = 'name'; t.textContent = name;
+  const l = document.createElement('span');
+  l.className = 'last'; l.textContent = last;
+  const m = document.createElement('span');
+  m.className = 'mark'; m.textContent = mark;
+  b.append(n, t, l, m);
+  b.onclick = () => {
+    /* Picking a mission leaves the Wasm shell in BRIEFING. The ledger stays
+     * visible on this combined form, so every later row click must first
+     * return that state machine to MENU; otherwise web_shell_pick_* rejects
+     * the pick and the old briefing appears stuck forever (H-UAT-020). */
+    if (M._web_shell_state() === SHELL.BRIEFING) M._web_shell_menu();
+    const rc = onPick();
+    if (rc === 0) {
+      /* The green ledger cue is selection, not campaign progression. Move its
+       * visual and accessible ownership only after Wasm accepts the pick;
+       * leaving `.next` painted green made row one look permanently selected
+       * after every later click (H-UAT-071b). */
+      for (const row of b.parentElement.querySelectorAll('.missionRow')) {
+        const selected = row === b;
+        row.classList.toggle('selected', selected);
+        if (selected) row.setAttribute('aria-current', 'true');
+        else row.removeAttribute('aria-current');
+      }
+      onShellState(M._web_shell_state());
+    }
+  };
+  return b;
+}
+
+function shellShow(which) {
+  /* shellBrief is a sub-region of the Scenario/Driver form, not a sibling
+   * screen: a mission pick fills the right-hand entry sheet in place. */
+  for (const id of ['shellMenu', 'shellGarage', 'shellDebrief', 'shellCredits'])
+    $(id).hidden = id !== which;
+  if (which !== null) $('shellPanel').hidden = false;
+}
+
+/*
+ * The briefing text as the PLAYER should see it.
+ *
+ * .npt objective files mark secret objectives with a literal "(hidden)"
+ * prefix — p01.npt line 2 is "(hidden)Kill all Bastards!". briefing_build
+ * (webmain.c) keeps them because they are the data; the shell must not
+ * print them, or every mission opens by spoiling its own twist. Developer
+ * mode keeps the raw text.
+ */
+function briefingForPlayer(raw, titled) {
+  if (DEV) return raw;
+  return raw.split('\n')
+    // briefing_build heads the text with "MISSION P01.MSN" — or, for an
+    // arena map, "MISSION Cactus Mountain" — because that is the only name
+    // the engine has for it. #briefTitle now carries the real one, so the
+    // header is noise.
+    //
+    // \S+ was wrong: it matched the filename form and let every TWO-WORD
+    // arena name through, so a race briefing opened with "MISSION Cactus
+    // Mountain" directly above a title already reading "Race · Cactus
+    // Mountain". Match the rest of the line instead.
+    .filter((l) => !(titled && /^MISSION \S.*$/.test(l)))
+    .filter((l) => !l.startsWith('(hidden)'))
+    .join('\n').replace(/^\n+/, '');
+}
+
+function missionLabel() {
+  // An arena map is not in the campaign file, so its name comes from the
+  // mission's own WRLD record instead of from a trip index.
+  const a = M._web_shell_arena_index();
+  if (a >= 0) {
+    const t = ARENA_TABS.find((x) => x.family === arena.family(a));
+    return `${t ? t.label : 'Arena'} · ${arena.name(a)}`;
+  }
+  const t = M._web_shell_trip(), i = M._web_shell_trip_index();
+  if (t < 0 || i < 0) return '';
+  return `${camp.trip(t).replace(/_/g, ' ')} · ${camp.title(t, i)}`;
+}
+
+/* Trip debrief in player language (H-UAT-015). A scenario failure prefers
+ * its authored NPT entry selected by failAllObj operand 2. The older
+ * player/dead-entity translation remains only as the unavailable-text
+ * fallback. The engine's terminal verb stays visible verbatim in the
+ * #debriefDev small print. */
+function tripResultForPlayer(r) {
+  if (r.result === 'complete') return 'All objectives complete.';
+  if (r.result === 'failed') {
+    if (r.failText) return r.failText;
+    if (r.playerDead) return 'You were destroyed.';
+    if (r.lost) {
+      const base = r.lost.replace(/\d+$/, '') || r.lost;
+      return `${base.charAt(0).toUpperCase()}${base.slice(1)} was destroyed.`;
+    }
+    return 'A mission objective was lost.';
+  }
+  return 'You quit to the debrief.';
+}
+
+function onShellState(st) {
+  const prevState = shellState;
+  shellState = st;
+  /* Trial auto-stop: leaving DRIVE ends the recording (the debrief knows
+   * the result; anything else is a quit). Auto-start is the DRIVE branch
+   * below when the dev panel armed a recording. */
+  if (prevState === SHELL.DRIVE && st !== SHELL.DRIVE && I76Trial.recording()) {
+    let result = 'quit';
+    if (st === SHELL.DEBRIEF) {
+      try {
+        result = JSON.parse(M.ccall('web_shell_result', 'string', [], [])).result
+          || 'quit';
+      } catch { /* keep 'quit' */ }
+    }
+    I76Trial.event('shell', { state: st, result });
+    trialStop(result);
+  }
+  if (st !== SHELL.DRIVE) {
+    const wasPaused = paused;
+    paused = false;
+    if (wasPaused && I76Audio.setPaused) I76Audio.setPaused(false);
+    $('pauseMenu').hidden = true;
+    $('objectiveHud').hidden = true;
+    $('radioHud').hidden = true;
+    clearTimeout(radioHideTimer);
+    /* H-UAT-038: the engine loop's active flag latches in the wasm; a
+     * mission exit mid-throttle otherwise drones into the menus. */
+    if (I76Audio.engineStop) I76Audio.engineStop();
+  }
+  /* FACT: menu, briefing and debrief loop native shell track 10.
+     PORT INTERIM: drive advances numbered tracks 2..11 pending WRLD's
+     authored per-mission track. Same-mode re-entry stays a no-op. */
+  I76Audio.setMusicMode(st === SHELL.DRIVE ? 'drive' : 'shell');
+  if (st === SHELL.DRIVE) {
+    mode = 'drive';
+    guidanceLast = 0;
+    gpuDirty = true;   // mission reloaded -> rebuild GPU scene buffers
+    shellShow(null);
+    $('shellPanel').hidden = true;
+    $('gamePanel').hidden = false;
+    refreshPalette();
+    const car = M.ccall('web_drive_vehicle', 'string', [], []);
+    $('driveHint').textContent =
+      'arrows/WASD drive · X reverse · Alt handbrake · ,/. shift · ' +
+      'space fires · 1–8 select · Enter cycle · L link · G horn · M map · N notepad · F1–F11 views · R recovers · ' +
+      'keypad 4/6 glance (fire out the window with space) · keypad 2/8 ' +
+      'look up/down · Ins target · ` mirror · keypad PgUp/PgDn camera range · P/ESC options' +
+      (car ? ` · vehicle ${car}` : '');
+    if (DEV) $('hudInfo').textContent = 'ESC opens Play Options';
+    if (trialArmed) trialStart();
+    I76Trial.event('shell', { state: st });
+  } else if (st === SHELL.DEBRIEF) {
+    mode = 'debrief';
+    const r = JSON.parse(M.ccall('web_shell_result', 'string', [], []));
+    onMissionResult(r);
+    const label = missionLabel();
+    // An arena debrief leads with the counter the mission was about, in
+    // the original's own words ("%d of %d Laps Completed", "%d of %d Flag
+    // Captures"), and its closing line is the mission's own result text,
+    // not a radio clip, so it is not labelled as one.
+    const isRace = r.family === FAM_RACE && r.lapTarget > 0;
+    const isCtf = r.family === FAM_CAPTURE && r.captureTarget > 0;
+    const isMelee = r.family === FAM_MELEE && r.killTarget > 0;
+    const isArena = isRace || isCtf || isMelee;
+    $('debriefText').textContent =
+      `${label || r.mission} — ${r.result.toUpperCase()}\n` +
+      (isArena ? '' : `${tripResultForPlayer(r)}\n`) +
+      '\n' +
+      (isRace ? `${r.laps} of ${r.lapTarget} Laps Completed · ` +
+                `${r.gates} checkpoints\n` : '') +
+      (isCtf ? `${r.captures} of ${r.captureTarget} Flag Captures · ` +
+               `${r.teams} teams\n` : '') +
+      (isMelee ? `${r.kills} of ${r.killTarget} Kills · ` +
+                 `${r.opponents} opponents\n` : '') +
+      `time ${r.time.toFixed(1)} s · distance ${r.dist.toFixed(0)} m · ` +
+      `top speed ${r.top.toFixed(0)} mph` +
+      // An arena's closing line is the mission's own result text; a
+      // trip's raw terminal verb moves to the dev line below instead of
+      // masquerading as a radio call (H-UAT-015).
+      (isArena && r.message ? `\n${r.message}` : '');
+    $('debriefDev').textContent =
+      !isArena && r.message ? `engine: ${r.message}` : '';
+    $('debriefDev').hidden = isArena || !r.message;
+    /*
+     * "next mission" is offered on a COMPLETED mission only — finishing
+     * the trip is what advances it. An abort or a failure offers retry
+     * and the trip list instead, which is the honest outcome and the one
+     * the engine can actually produce today.
+     */
+    $('shellNextBtn').hidden =
+      !(r.result === 'complete' && M._web_shell_has_next() === 1);
+    /*
+     * Campaign-end credits (base Trip's final mission completed). The
+     * wasm owns the routing truth (profile + terminal row + result);
+     * the button only surfaces web_shell_has_credits().
+     */
+    $('shellCreditsBtn').hidden =
+      !(r.result === 'complete' && M._web_shell_has_credits() === 1);
+    shellShow('shellDebrief');   // canvas keeps the frozen last frame
+  } else if (st === SHELL.CREDITS) {
+    mode = 'credits';
+    shellShow('shellCredits');
+    $('gamePanel').hidden = true;
+    /* The purchaser-supplied credits cutscene (cred*.smk) plays over the
+     * credits screen through the normal page-owned movie path — no wasm
+     * ack is involved, so a missing clip simply leaves the screen. */
+    const name = creditsName();
+    if (name) playMovie(name);
+  } else if (st === SHELL.BRIEFING) {
+    mode = 'briefing';
+    const label = missionLabel();
+    $('briefTitle').textContent = label || 'Scenario';
+    $('briefText').textContent =
+      briefingForPlayer(M.ccall('web_shell_briefing', 'string', [], []),
+                        !!label);
+    shellShow('shellMenu');
+    $('entryEmpty').hidden = true;
+    $('shellBrief').hidden = false;
+    refreshEntryForm();
+    $('gamePanel').hidden = true;
+  } else {                       // MENU
+    mode = 'menu';
+    refreshShellMenu();
+    shellShow('shellMenu');
+    $('entryEmpty').hidden = false;
+    $('shellBrief').hidden = true;
+    $('gamePanel').hidden = true;
+    $('speedo').textContent = '';
+    $('hudInfo').textContent = '';
+  }
+  /* The file picker is how you START; it is not part of playing. Once the
+   * engine is up it belongs to the trip screen only, so the game screen
+   * is not pushed below a wall of file inputs. */
+  if (booted) $('assetPanel').hidden = true;
+}
+
+/* Every terminal outcome is recorded; only a completion advances the
+ * trip. The complete branch is exercised: P01 reaches it. */
+function onMissionResult(r) {
+  const prev = progress.results[r.mission];
+  progress.results[r.mission] = {
+    result: r.result, ticks: r.ticks, timeS: r.time,
+    distM: r.dist, topMph: r.top, at: new Date().toISOString(),
+    runs: (prev && prev.runs || 0) + 1,
+  };
+  if (r.result === 'complete' && !progress.completed.includes(r.mission))
+    progress.completed.push(r.mission);
+  /*
+   * Written IMMEDIATELY, not debounced. A mission ends once, so there is
+   * nothing to coalesce, and the debounce lost the record outright when
+   * the player left the debrief and reloaded inside the window (observed
+   * in the browser gate: the run before last came back, not the last).
+   */
+  Save.flush();
+}
+
+$('shellStartBtn').onclick = () => {
+  /* Keep the entry form as the authority at the exact start boundary.
+   * A late shell refresh must not silently restore the authored scenario
+   * chassis after the player has visibly chosen another one. */
+  M.ccall('web_shell_set_vehicle', null, ['string'], [progress.garage.vcf]);
+  const rc = M._web_shell_start();
+  if (rc !== 0)
+    $('briefText').textContent += `\n(mission load failed: ${rc})`;
+};
+// ---- human-trial recording (dev panel; docs/HUMAN-UAT.md) -------------
+let trialArmed = false;
+
+function currentMissionPath() {
+  const t = M._web_shell_trip(), i = M._web_shell_trip_index();
+  if (t >= 0 && i >= 0) {
+    const p = M.ccall('web_campaign_mission_path', 'string',
+                      ['number', 'number'], [t, i]);
+    if (p) return p;
+  }
+  const a = M._web_shell_arena_index();
+  if (a >= 0) {
+    const p = M.ccall('web_arena_path', 'string', ['number'], [a]);
+    if (p) return p;
+  }
+  return $('missionSel').value || '';
+}
+
+function trialSyncUi() {
+  $('trialRecBtn').textContent = I76Trial.recording()
+    ? '■ stop + save'
+    : trialArmed ? '⏺ armed — starts on drive' : '⏺ record trial';
+  $('trialMarkBtn').disabled = !I76Trial.recording();
+}
+
+function trialStart() {
+  if (I76Trial.recording()) return;
+  const ok = I76Trial.start({
+    build: M.ccall('web_build_id', 'string', [], []),
+    mission: currentMissionPath(),
+    vehicle: M.ccall('web_drive_vehicle', 'string', [], []),
+    shellRules: {
+      laps: M._web_shell_rule_laps(),
+      captures: M._web_shell_rule_captures(),
+      kills: M._web_shell_rule_kills(),
+      minutes: M._web_shell_rule_minutes(),
+    },
+    renderer, viewPreset: driveViewPreset, canvas: $('screen'),
+    startTick: JSON.parse(M.ccall('web_drive_pose', 'string', [], [])).tick,
+  });
+  trialArmed = false;
+  trialSyncUi();
+  if (ok) $('trialInfo').textContent = 'recording — F12 drops a marker';
+}
+
+async function trialStop(result) {
+  const bundle = await I76Trial.stop(result);
+  trialSyncUi();
+  if (!bundle) return;
+  if (!bundle.tape.length) {
+    $('trialInfo').textContent = 'trial discarded — no ticks recorded';
+    return;
+  }
+  try {
+    const name = await I76Trial.save(bundle);
+    $('trialInfo').textContent =
+      `trial saved: ${name} (${bundle.tape.length} ticks, ` +
+      `${bundle.markers.length} markers)`;
+  } catch (err) {
+    console.warn('trial save failed', err);
+    console.log('trial bundle', bundle);
+    $('trialInfo').textContent = 'trial save failed — bundle in console';
+  }
+}
+
+function trialMark() {
+  const seq = I76Trial.marker();
+  if (seq) $('trialInfo').textContent = `marker ${seq} dropped`;
+}
+
+$('trialRecBtn').onclick = () => {
+  if (I76Trial.recording()) { trialStop(null); return; }
+  if (mode === 'drive') trialStart();
+  else trialArmed = !trialArmed;
+  trialSyncUi();
+};
+$('trialMarkBtn').onclick = trialMark;
+
+$('shellBackBtn').onclick = () => M._web_shell_menu();
+$('shellContinueBtn').onclick = () => M._web_shell_menu();
+$('shellNextBtn').onclick = () => {
+  if (M._web_shell_next() !== 0) M._web_shell_menu();
+};
+$('shellCreditsBtn').onclick = () => {
+  if (M._web_shell_credits() !== 0) M._web_shell_menu();
+};
+$('shellCreditsDoneBtn').onclick = () => M._web_shell_menu();
+$('shellRetryBtn').onclick = () => {
+  if (M._web_shell_retry() !== 0) M._web_shell_menu();
+};
+
+// Drive input: browser keys -> PlatformKey values (platform.h; keep in sync)
+// -> web_key_event -> input.c queue. Consumed by web_poll_input (drive loop).
+const PK = { Escape: 1, Enter: 2, ' ': 3, ArrowUp: 4, ArrowDown: 5,
+             ArrowLeft: 6, ArrowRight: 7, w: 8, a: 9, s: 10, d: 11, p: 12, x: 13,
+             '1': 14, '2': 15, '3': 16, '4': 17,
+             '5': 18, '6': 19, '7': 20, '8': 21,
+             g: 22, ',': 23, '.': 24, Alt: 25,
+             /* Appended after keypad keys in platform.h: L=35, M=36, N=37. */
+             l: 35, m: 36, n: 37 };
+/* Keypad-cluster glance + Insert + backquote (the PK_KP_*,
+ * PK_INSERT, and PK_BACKQUOTE values from platform.h), plus the
+ * GreyPageUp/GreyPageDown/GreyEnd camera range keys (track_distance,
+ * overview_zoom, zoom_factor in the stock input.map — resolved per
+ * active view by the engine). Keyed by e.code, not
+ * e.key: numpad e.key changes with
+ * NumLock state, and backquote e.key varies by layout. Numpad8/Numpad2 keep
+ * the stock input.map inversion (GreyUpArrow = glance DOWN, GreyDownArrow =
+ * glance UP) — the browser aliases nothing onto the plain arrow keys, which
+ * stay on driving exactly like the original's plain-arrow bindings. */
+const PK_CODE = { Numpad4: 26, Numpad6: 27, Numpad8: 28, Numpad2: 29,
+                  Insert: 30, Backquote: 31,
+                  Numpad9: 32, Numpad3: 33, Numpad1: 34,
+                  PageUp: 32, PageDown: 33, End: 34 };
+const DRIVE_EXTRA_KEYS = Object.values(PK_CODE);
+/* On-screen glance/mirror cluster: the same PlatformKey events the numpad
+ * sends (press-and-hold for glances, an edge for the mirror toggle), so
+ * keyboards without a keypad cluster keep the stock bindings' behavior. */
+for (const btn of document.querySelectorAll('.lookBtn')) {
+  const pk = Number(btn.dataset.pk);
+  const press = (down) => (e) => { e.preventDefault(); M._web_key_event(pk, down); };
+  btn.addEventListener('pointerdown', press(1));
+  btn.addEventListener('pointerup', press(0));
+  btn.addEventListener('pointercancel', press(0));
+  btn.addEventListener('pointerleave', press(0));
+  btn.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+$('mirrorBtn').addEventListener('click', () => {
+  M._web_key_event(PK_CODE.Backquote, 1);
+  M._web_key_event(PK_CODE.Backquote, 0);
+});
+function releaseDriveKeys() {
+  for (const pk of [PK[' '], PK.ArrowUp, PK.ArrowDown, PK.ArrowLeft,
+                    PK.ArrowRight, PK.w, PK.a, PK.s, PK.d, PK.x,
+                    PK['1'], PK['2'], PK['3'], PK['4'],
+                    PK['5'], PK['6'], PK['7'], PK['8'], PK.g, PK.l,
+                    PK.m, PK.n, PK.Enter, PK[','], PK['.'], PK.Alt,
+                    ...DRIVE_EXTRA_KEYS])
+    M._web_key_event(pk, 0);
+}
+function recoverDrive() {
+  releaseDriveKeys();
+  if (M._web_drive_recover() !== 0) return;
+  I76Trial.event('recover', {});
+  gpuDirty = true;
+  $('driveHint').textContent = 'recovered to recent safe ground · arrows/WASD drive · X reverse · Alt handbrake · ,/. shift · space fires · 1–8 select · Enter cycle · L link · G horn · M map · N notepad · F1–F11 views · R recovers · keypad 4/6 glance · keypad 2/8 look up/down · Ins target · ` mirror · keypad PgUp/PgDn camera range · P/ESC options';
+}
+$('recoverBtn').onclick = recoverDrive;
+function setPaused(next) {
+  const was = paused;
+  paused = !!next && shellState === SHELL.DRIVE && !movieRunning;
+  $('pauseMenu').hidden = !paused;
+  simAcc = 0;
+  if (paused) {
+    releaseDriveKeys();
+    /* PAPER_ESC_PLYOPT = 2 — original Play Options diner pad. */
+    if (typeof M._web_paper_set_escape === 'function')
+      M._web_paper_set_escape(2);
+    try { M._web_drive_render(); blit(); } catch (_) { /* first frame ok */ }
+  } else if (typeof M._web_paper_set_escape === 'function') {
+    M._web_paper_set_escape(0);
+  }
+  if (paused !== was) {
+    /* FACT H-UAT-043: Play Options pauses/resumes MCI music at its current
+       position and pauses the SFX mixer. Keep drive mode/track selection
+       intact; movies retain their separate null-mode audio lifecycle. */
+    I76Audio.setPaused(paused);
+    I76Trial.event('pause', { on: paused });
+  }
+}
+$('pauseDoneBtn').onclick = () => setPaused(false);
+$('pauseExitBtn').onclick = () => {
+  setPaused(false);
+  M._web_key_event(PK.Escape, 1);
+  M._web_key_event(PK.Escape, 0);
+};
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || shellState !== SHELL.DRIVE || movieRunning)
+    return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  setPaused(!paused);
+}, true);
+const pushKey = (e, down) => {
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  /* Purchaser gamekey.map F-key rows: F1..F11 select PRESET_VIEW_1/2/3/
+   * 12/11/4/6/7/8/10/5 (preset 9 has no stock key — the view button's
+   * cycle reaches it). F12 is TOGGLE_VIDEOMODE, not a camera, and stays
+   * unclaimed: the port has no video-mode action. preventDefault runs
+   * even while paused so browser Help etc. never steals an F-key. */
+  const preset = VIEW_PRESET_KEY[e.key];
+  if (preset !== undefined && mode === 'drive' && !movieRunning) {
+    e.preventDefault();
+    if (down && !e.repeat && !paused) selectViewPreset(preset);
+    return;
+  }
+  if (k === 'p' && shellState === SHELL.DRIVE && !movieRunning) {
+    if (down && !e.repeat) setPaused(!paused);
+    e.preventDefault();
+    return;
+  }
+  /* F12 marks the last completed trial tick even while Play Options has
+   * frozen the simulation; consume it before the paused early return. */
+  if (k === 'F12' && I76Trial.recording()) {
+    if (down && !e.repeat) trialMark();
+    e.preventDefault();
+    return;
+  }
+  if (paused) return;
+  /* Map owns M (stock show_map); it always reaches the engine. */
+  /* The stock map's C is POETRY — the port's old cockpit/chase toggle
+   * stole it; the key is released back to that meaning (unimplemented)
+   * and the view family lives on the F-keys and the view button. */
+  if (k === 'r') {
+    if (down && !e.repeat && mode === 'drive') recoverDrive();
+    e.preventDefault();
+    return;
+  }
+  const pk = PK_CODE[e.code] ?? PK[k];
+  if (!pk) return;
+  M._web_key_event(pk, down);
+  if (mode === 'drive' &&
+      ([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+        'w', 'a', 's', 'd', 'x', '1', '2', '3', '4', '5', '6', '7', '8',
+        'g', 'l', 'Enter', ',', '.', 'Alt', 'm', 'n'].includes(k) ||
+       DRIVE_EXTRA_KEYS.includes(pk)))
+    e.preventDefault();
+};
+window.addEventListener('keydown', (e) => pushKey(e, 1));
+window.addEventListener('keyup', (e) => pushKey(e, 0));
+window.addEventListener('blur', releaseDriveKeys);
+window.addEventListener('pagehide', releaseDriveKeys);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) releaseDriveKeys();
+});
+// Wheel zoom belongs to the mesh/topology viewers. It swallows the page
+// scroll over the canvas, which in drive mode is a consumer annoyance for
+// a control the consumer shell has no use for.
+if (DEV)
+  $('screen').addEventListener('wheel', (e) => {
+    e.preventDefault();
+    if (mode === 'mission') {
+      if (dist <= 0) dist = 1500;
+      dist = Math.min(6000, Math.max(150, dist * (e.deltaY < 0 ? 0.85 : 1 / 0.85)));
+    } else {
+      zoom = Math.min(8, Math.max(0.1, zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+    }
+  }, { passive: false });
+
+$('dirInput').onchange = async (e) => {
+  const files = [...e.target.files];
+  if (!files.length) return;
+  // The legacy multi-pick loses path info; the label says miss8/, so
+  // unrouted files go there (the old picker's behaviour) — but let
+  // classify() claim the files it knows first (archives, fonts, ...).
+  status('reading mission files…');
+  const res = await Assets.stageFiles(files.map(f => {
+    const routed = Assets.classify({ name: f.name, path: f.name });
+    return { name: f.name, path: routed || 'miss8/' + f.name, file: f };
+  }), stagingProgress);
+  intakeSummary(res);
+  veilReset();
+};
+
+/*
+ * DEVELOPER controls below. #driveBtn in particular is a SECOND way into
+ * drive mode that never touches the wasm shell state: s_shell stays
+ * SHELL_MENU, so ESC is not latched, web_shell_update() never transitions
+ * and there is no debrief. Exactly one route into a mission is a consumer
+ * route (the shell); this one stays behind ?dev=1.
+ */
+$('missionBtn').onclick = () => {
+  const name = $('missionSel').value;
+  if (!name) return;
+  const rc = M.ccall('web_mission_load', 'number', ['string'], [name]);
+  if (rc !== 0) { $('missionInfo').textContent = `${name}: load failed`; return; }
+  $('missionInfo').textContent = M.ccall('web_mission_stats', 'string', [], []);
+  refreshPalette();          // level palette unifies world rendering too
+  $('hudInfo').textContent = '';   // the HUD itself draws in drive mode only
+  $('gamePanel').hidden = false;
+  mode = 'mission';
+  dist = -1;
+};
+
+$('driveBtn').onclick = () => {
+  const name = $('missionSel').value;
+  if (!name) { $('missionInfo').textContent = 'load a mission first'; return; }
+  if (I76Trial.recording()) trialStop('quit');   // dev reload: save the old run
+  // "" = let the mission name its own car, same as the shell path.
+  const rc = M.ccall('web_drive_load', 'number', ['string', 'string'],
+                     [name, '']);
+  if (rc !== 0) { $('missionInfo').textContent = `drive load failed (${rc})`; return; }
+  $('missionInfo').textContent = M.ccall('web_drive_stats', 'string', [], []);
+  $('hudInfo').textContent = refreshPalette()
+    ? 'HUD on — level palette unified (cockpit + world share the level .act)'
+    : 'HUD unavailable — no level palette found; mesh palette in use';
+  $('gamePanel').hidden = false;
+  mode = 'drive';
+  gpuDirty = true;   // fresh web_drive_load -> rebuild GPU scene buffers
+  if (trialArmed) trialStart();
+};
+
+$('viewBtn').onclick = () => {
+  terrainView = 1 - terrainView;
+  M._web_terrain_view(terrainView);
+};
+
+$('meshModeBtn').onclick = () => {
+  mode = 'mesh';
+  $('hudInfo').textContent = '';
+  $('gamePanel').hidden = false;
+};
+
+$('gpuBtn').onclick = () => {
+  renderer = renderer === 'gpu' ? 'sw' : 'gpu';
+  progress.prefs.renderer = renderer;
+  try { localStorage.setItem('i76.renderer', renderer); } catch { /* ignore */ }
+  Save.touch();
+  $('gpuBtn').textContent = `renderer: ${renderer}`;
+  if (window.__footerRenderer) window.__footerRenderer();
+  gpuDirty = true;
+  if (renderer === 'gpu') {
+    gpuFailed = false;   // explicit retry: clear a prior init failure
+    window.__i76.blitErr = null;
+    if (!navigator.gpu)
+      $('missionInfo').textContent =
+        'WebGPU unavailable in this browser — will fall back to software on drive';
+    else if (mode !== 'drive')
+      $('missionInfo').textContent = 'gpu renderer armed — hit drive to use it';
+  } else if ($('missionInfo').textContent.startsWith('gpu renderer armed')) {
+    $('missionInfo').textContent = '';
+  }
+};
+$('gpuBtn').textContent = `renderer: ${renderer}`;
+if (window.__footerRenderer) window.__footerRenderer();
+
+// Drive camera: the original's manual view family (nitro.exe preset
+// handlers 0x435aa0..0x4381b0; purchaser gamekey.map F-key rows).
+// Selection goes through web_drive_preset so keyboard, button and a
+// restored profile all land in identical state. The profile owns the
+// choice now; localStorage is written too so an older build still finds
+// the cockpit/chase names it knows.
+const VIEW_PRESET_KEY = { F1: 1, F2: 2, F3: 3, F4: 12, F5: 11, F6: 4,
+                          F7: 6, F8: 7, F9: 8, F10: 10, F11: 5 };
+const VIEW_NAMES = { 1: 'cockpit', 2: 'chase', 3: 'fixed 180°',
+                     4: 'free-eye', 5: 'track', 6: 'fixed 0°',
+                     7: 'fixed rear', 8: 'fixed 150°', 9: 'fixed 30°',
+                     10: 'overhead', 11: 'track from target', 12: 'track' };
+// The on-page cycle covers the whole family — including preset 9, which
+// the stock map leaves unbound.
+const VIEW_CYCLE = [1, 2, 3, 9, 4, 10, 12];
+function viewPresetFromPref(v) {
+  if (v === 'chase') return 2;
+  if (v === 'cockpit') return 1;
+  const n = Number(v);
+  return n >= 1 && n <= 12 ? n : 1;
+}
+let driveViewPreset = viewPresetFromPref(progress.prefs.view);
+function applyView() {
+  M._web_drive_preset(driveViewPreset);
+  $('camBtn').textContent = `view: ${VIEW_NAMES[driveViewPreset]}`;
+  /* A preset changes the camera, LOD rings and car/interior visibility, not
+   * mission ownership. Keep face/terrain/road/sky textures and mesh buffers;
+   * refreshDraws updates visibility on the next frame. Reclassifying this as
+   * gpuDirty used to synchronously destroy and re-upload the whole mission on
+   * every F-key, presenting a ~0.5 s last-frame stall under headless WebGPU. */
+  gpuViewDirty = true;
+}
+function selectViewPreset(p) {
+  driveViewPreset = p;
+  I76Trial.event('view', { preset: p });
+  progress.prefs.view = p;   // the profile stores the preset id
+  try { localStorage.setItem('i76.view', VIEW_NAMES[p] || String(p)); } catch { /* ignore */ }
+  Save.touch();   // the other write point
+  applyView();
+}
+function cycleDriveView() {
+  const i = VIEW_CYCLE.indexOf(driveViewPreset);
+  selectViewPreset(VIEW_CYCLE[(i + 1) % VIEW_CYCLE.length]);
+}
+$('camBtn').onclick = cycleDriveView;
+applyView();
+// ---- asset intake: open folder, whole-page drop, remembered folder -----
+// assets.js routes everything into the same MEMFS /data/ staging the old
+// three pickers used. The whole document is the drop surface; dragDepth
+// counts enter/leave so the veil stays until the last child is exited.
+
+/* Install the purchaser's Lee Regular TrueType as a CSS font when staged.
+ * The engine paper surfaces (map/notepad) are VQM art; the HTML shell
+ * briefings/menus use this font so they stop faking handwriting with
+ * system cursives. Safe to call repeatedly — first successful load wins. */
+let leeFontReady = false;
+async function installLeeFont() {
+  if (leeFontReady || !M || !M.FS) return;
+  const name = Assets.stagedPaths().find(
+    (p) => p.toLowerCase() === 'lee_____.ttf');
+  if (!name) return;
+  try {
+    const bytes = M.FS.readFile('/data/' + name);
+    const face = new FontFace('Lee Regular', bytes.buffer);
+    await face.load();
+    document.fonts.add(face);
+    leeFontReady = true;
+  } catch (err) {
+    console.warn('Lee font install failed', err);
+  }
+}
+
+/* Live staging counter: a running TOTAL, not a per-batch count — a long
+ * folder stage counts up instead of sitting silent (playtest polish). */
+function stagingProgress(total) {
+  $('stagedInfo').textContent = `staging… ${total} files in`;
+}
+
+function intakeSummary(res) {
+  /*
+   * Lead with the RUNNING TOTAL, not the batch delta. The old line opened
+   * with "2 staged — ... 168 mission files" after an incremental drop:
+   * "2" was that drop's new files, but it read as the whole staged set
+   * (playtest H-UAT-016 flagged it). The batch counts stay, as deltas.
+   */
+  const bits = [];
+  if (res && res.restored)
+    bits.push(`restored your staged files — ${res.restored} files`);
+  if (res && res.staged) bits.push(`+${res.staged} new`);
+  if (res && res.skipped) bits.push(`${res.skipped} already staged`);
+  if (res && res.ignored) bits.push(`${res.ignored} ignored`);
+  const profile = Assets.archiveProfile();
+  const core = profile ? `${profile === 'base' ? 'base game' : 'Nitro Pack'} archive ready`
+                       : 'need nitro.zfs + nitro.zix, or I76.ZFS + I76.ZIX';
+  const miss = Assets.stagedCount('miss8') + Assets.stagedCount('miss16');
+  const music = Assets.stagedCount('music');
+  const movies = Assets.stagedCount('smk');
+  /*
+   * Report fonts explicitly. They live loose beside nitro.zfs rather than
+   * inside it, so the folder drop picks them up but the manual two-file path
+   * would not — and their absence is INVISIBLE at runtime: the HUD just
+   * renders without its readout instead of complaining. Say so here rather
+   * than let someone conclude the text is simply unimplemented.
+   */
+  const fonts = Assets.stagedPaths().filter((p) => p.toLowerCase().endsWith('.fnt')).length;
+  void installLeeFont();
+  /*
+   * The campaign file is reported for the same reason as the fonts: it is
+   * loose in addon/, so a two-file manual pick misses it, and its absence
+   * is silent — the shell just falls back to a flat mission list with no
+   * trips and no titles.
+   */
+  const campFile = Assets.stagedPaths().some(
+    (p) => p.toLowerCase() === 'addon/scenario.dat');
+  const campaign = profile === 'base'
+    ? ' · base retail shell order/progression'
+    : (campFile ? ' · campaign' : ' · no campaign file (no trips or titles)');
+  const lee = Assets.stagedPaths().some(
+    (p) => p.toLowerCase() === 'lee_____.ttf');
+  const total = Assets.stagedPaths().length;
+  $('stagedInfo').textContent =
+    `${total} file${total === 1 ? '' : 's'} staged` +
+    (bits.length ? ` (${bits.join(' · ')})` : '') + ' — ' +
+    `${core} · ${miss} mission files` + (music ? ` · ${music} music` : '') +
+    (movies ? ` · ${movies} cutscenes` : '') +
+    (fonts ? ` · ${fonts} fonts` : ' · no fonts (HUD readout will be blank)') +
+    (lee ? ' · Lee shell font' : '') +
+    campaign +
+    (Assets.persistNotice() ? ` · ${Assets.persistNotice()}` : '');
+  // Staged bytes persist locally for the next visit, so the control that
+  // clears them is offered as soon as there is anything to clear.
+  if (total) $('clearStagedBtn').hidden = false;
+  if (!booted) $('loadBtn').disabled = !Assets.ready();
+  else if (shellState === SHELL.MENU) refreshShellMenu();
+  if (booted) $('introBtn').hidden = !introName();
+  // Keep the playlist in lockstep with what is staged (music/ drops
+  // after boot included; an unchanged list is a no-op inside I76Audio).
+  I76Audio.setMusicTracks(Assets.musicTracks());
+}
+
+async function openFolder(handle) {
+  status('reading game folder…');
+  const files = await Assets.collectFromHandle(handle);
+  intakeSummary(await Assets.stageFiles(files, stagingProgress));
+  if (Assets.ready()) await boot();
+  else status('no supported .zfs + .zix pair in that folder — pick the extracted app folder.');
+}
+
+$('openFolderBtn').onclick = async () => {
+  try {
+    const handle = await window.showDirectoryPicker({ mode: 'read' });
+    await openFolder(handle);
+    if (Assets.ready()) {
+      await Assets.remember(handle);
+      $('continueBtn').hidden = false;
+      $('forgetBtn').hidden = false;
+    }
+  } catch (e) {
+    if (e && e.name !== 'AbortError')
+      status('folder open failed: ' + (e.message || e));
+  }
+};
+
+$('continueBtn').onclick = async () => {
+  const h = await Assets.recall(true);   // click = gesture → may prompt
+  if (h) await openFolder(h);
+  else status('folder permission not granted — open it again.');
+};
+
+$('forgetBtn').onclick = async () => {
+  await Assets.forget();
+  $('continueBtn').hidden = true;
+  $('forgetBtn').hidden = true;
+};
+
+/* Clear the locally persisted staged set (bytes AND folder handle). The
+ * engine keeps whatever is already staged in memory this session; the next
+ * visit starts from a clean intake. */
+$('clearStagedBtn').onclick = async () => {
+  await Assets.clearStaged();
+  await Assets.forget();
+  $('clearStagedBtn').hidden = true;
+  $('continueBtn').hidden = true;
+  $('forgetBtn').hidden = true;
+  $('restoreNote').hidden = true;
+  status('staged files cleared from this browser — the page will ask for ' +
+         'your game folder on the next visit.');
+};
+
+// A debounced write loses the last debrief if the tab is closed inside
+// the window. pagehide is the last event a browser reliably delivers.
+window.addEventListener('pagehide', () => { Save.flush(); I76Audio.detach(); });
+// bfcache restore: detach() kept the playlist and mode, so re-attaching
+// resumes output (still gesture-gated by the autoplay policy).
+window.addEventListener('pageshow', (e) => { if (e.persisted) I76Audio.attach(M); });
+
+let dragDepth = 0;
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('dragenter', (e) => {
+  e.preventDefault();
+  if (++dragDepth === 1) $('dropVeil').hidden = false;
+});
+window.addEventListener('dragleave', (e) => {
+  e.preventDefault();
+  if (--dragDepth <= 0) { dragDepth = 0; $('dropVeil').hidden = true; }
+});
+window.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  $('dropVeil').hidden = true;
+  status('reading dropped files…');
+  const res = await Assets.stageFiles(
+    await Assets.collectFromDrop(e.dataTransfer), stagingProgress);
+  intakeSummary(res);
+  if (Assets.ready()) await boot();
+});
+
+/*
+ * The intake surface opens LAST.
+ *
+ * This module has two top-level awaits before it registers a single
+ * handler (the wasm module, then the saved profile), and the file inputs
+ * are in the markup from the first paint. A pick landing in that window
+ * fires a `change` event at an onchange that is still null — the file is
+ * silently dropped and nothing ever reports it. The inputs therefore ship
+ * `disabled` and are enabled here, after every handler exists. Observed
+ * for real: an automated pick 0.1 s after the wasm resolved did nothing
+ * at all, and the page still said "wasm ready".
+ */
+const INTAKE_INPUTS = ['zixFile', 'zfsFile', 'dirInput', 'fntFile', 'campFile',
+                       'musicFile', 'movieFile'];
+for (const id of INTAKE_INPUTS) $(id).disabled = false;
+
+// Startup: rehydrate a previous visit's staged set, or surface the
+// remembered-folder buttons.
+//
+// Order matters (H-UAT-016 — "staged assets do not survive reload"):
+//   1. Persisted staged BYTES restore first: they exist for every intake
+//      path (drop, manual pick, folder), need no permission prompt, and
+//      boot the shell with zero clicks.
+//   2. Otherwise a remembered folder handle whose read permission is still
+//      granted (same-session reload) auto-stages and boots.
+//   3. Otherwise the "continue" button re-asks folder permission on click
+//      (requestPermission needs a user gesture).
+(async () => {
+  if (Assets.canPickFolder()) {
+    $('openFolderBtn').hidden = false;
+    if (await Assets.stored()) {
+      $('continueBtn').hidden = false;
+      $('forgetBtn').hidden = false;
+    }
+  }
+  /*
+   * The startup auto-intake DECISION is published on <html
+   * data-i76-restore="files|handle|none"> once it is final. Harnesses (and
+   * anyone debugging) branch on it instead of racing the page: a second
+   * visit auto-boots the shell mid-way through a scripted manual staging
+   * run, and the two flows fought (observed: accept_dom_win's second
+   * journey clicked a menu the rehydration was rebuilding).
+   */
+  const restored = await Assets.restoreStaged();
+  if (restored > 0) {
+    const note = `restored your staged files — ${restored} files ` +
+                 `(local browser storage; nothing was uploaded)`;
+    $('restoreNote').textContent = note;
+    $('restoreNote').hidden = false;
+    intakeSummary({ restored });
+    status(note);
+    if (Assets.ready()) await boot();
+    document.documentElement.dataset.i76Restore = booted ? 'files' : 'none';
+    return;
+  }
+  const h = await Assets.recall(false);
+  if (h) await openFolder(h);
+  document.documentElement.dataset.i76Restore =
+    booted ? 'handle' : 'none';
+})();
+
+</script>
+</body>
+</html>

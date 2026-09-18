@@ -1,0 +1,211 @@
+<!doctype html>
+<!-- H-UAT-052/053 driven road regressions. Self-driving; road_traversal_gate.mjs owns launch/assets/artifacts. -->
+<meta charset="utf-8"><title>road traversal — running</title>
+<style>
+body{margin:0;padding:12px;background:#11151d;color:#d9e1e8;font:12px/1.35 ui-monospace,monospace}
+h1{font:16px system-ui;margin:0 0 8px}.gallery{display:grid;grid-template-columns:repeat(3,320px);gap:8px}
+figure{margin:0}canvas{width:320px;height:240px;border:1px solid #445;background:#000}figcaption{white-space:pre-wrap}
+pre{max-width:976px;white-space:pre-wrap}.pass{color:#7ee787}.fail{color:#ff7b72}.skip{color:#d29922}
+</style>
+<h1>H-UAT-052/053 — driven road ownership</h1><div id="banner">running…</div><div id="gallery" class="gallery"></div><pre id="result"></pre>
+<script type="module">
+import {
+  bootEngine,GpuScene,collectDraws,refreshDraws,readCamera,readTerrainGrid,
+  readTerrainLod,readTerrainTexture,readRoads,readSkyColor,readSkyZenith,
+  readSkyTex,applySoftwareLight,readPalette,indexedFrameToRgba,cameraViewProj,
+  readOverlay,fullFrameDiff,FB_W,FB_H,
+} from './gpu_scene.mjs';
+const q=new URLSearchParams(location.search);
+const base=q.get('app');
+const mission=q.get('mission')||'miss8/P02.MSN';
+const banner=document.getElementById('banner'), result=document.getElementById('result'), gallery=document.getElementById('gallery');
+const finish=(status,data)=>{window.__roadTraversal={status,...data};banner.textContent=`RESULT: ${status}`;banner.className=status.toLowerCase();result.textContent=JSON.stringify(window.__roadTraversal,null,2);document.title=`road traversal — ${status}`};
+const io={fetchAsset:async rel=>{try{const r=await fetch(base+rel);return r.ok?new Uint8Array(await r.arrayBuffer()):null}catch{return null}}};
+const fnv=bytes=>{let h=0x811c9dc5;for(const b of bytes){h^=b;h=Math.imul(h,0x01000193)>>>0}return `0x${h.toString(16).padStart(8,'0')}`};
+const paint=(rgba,label)=>{const f=document.createElement('figure'),c=document.createElement('canvas'),cap=document.createElement('figcaption');c.width=FB_W;c.height=FB_H;const x=c.getContext('2d'),im=x.createImageData(FB_W,FB_H);im.data.set(rgba);x.putImageData(im,0,0);cap.textContent=label;f.append(c,cap);gallery.append(f)};
+try{
+  if(!base)throw new Error('missing ?app asset route');
+  if(!navigator.gpu){finish('SKIP',{mission,reason:'navigator.gpu absent'});throw new Error('__terminal__')}
+  const adapter=await navigator.gpu.requestAdapter();
+  if(!adapter){finish('SKIP',{mission,reason:'requestAdapter() null'});throw new Error('__terminal__')}
+  const device=await adapter.requestDevice();
+  const {M,rc}=await bootEngine(io,{mission});
+  if(rc!==0)throw new Error(`engine boot rc=${rc}`);
+
+  /* Same continuous physical drive used for the repro: let the scripted
+   * opening run, pop it through the stock Space binding, wait for player
+   * ownership, then hold full throttle straight for 100 simulation ticks.
+   * No teleport or pose write occurs. */
+  for(let i=0;i<520;i++)M._web_drive_step();
+  M._web_key_event(3,1);M._web_drive_step();M._web_key_event(3,0);M._web_drive_step();
+  let wait=0;while(!M._web_drive_can_recover()&&wait++<500)M._web_drive_step();
+  if(!M._web_drive_can_recover())throw new Error('player control handoff missing');
+  M._web_drive_preset(2);
+
+  M._terrain_road_diagnostics_enable(1);
+  const gs=new GpuScene(device,null,readSkyColor(M),FB_W,FB_H,readSkyZenith(M),true);
+  applySoftwareLight(M,gs);gs.setSkyTex(readSkyTex(M));gs.setTerrainTexture(readTerrainTexture(M));
+  const scene=collectDraws(M);if(!scene)throw new Error('drawlist unavailable');gs.setInstances(scene,M);
+  const palette=readPalette(M),npix=FB_W*FB_H;
+  const syncGpu=()=>{
+    const lod=readTerrainLod(M);
+    if(lod&&lod.nverts>0)gs.setTerrainLod(lod.verts,lod.nverts);else gs.setTerrain(readTerrainGrid(M));
+    const roads=readRoads(M);if(roads)gs.setRoads(roads);
+    if(refreshDraws(M,scene)!==scene.count)throw new Error('drawlist membership changed');
+    const overlay=readOverlay(M);if(overlay)gs.setHud(overlay.indices,palette,overlay.mask);
+    const cam=readCamera(M);gs.setCameraBasis(cam);return cam;
+  };
+  const captureOwners=async()=>{
+    M._web_drive_render();
+    const pose=JSON.parse(M.ccall('web_drive_pose','string',[],[]));
+    const swZp=M._terrain_road_footprint_z_ptr(),swOp=M._terrain_road_owner_ptr();
+    if(!swZp||!swOp)throw new Error('software road diagnostics unavailable');
+    const swZ=new Float32Array(M.wasmMemory.buffer,swZp,npix).slice();
+    const swOwner=new Uint8Array(M.wasmMemory.buffer,swOp,npix).slice();
+    const cam=syncGpu();
+    await gs.frame(Float32Array.from(cameraViewProj(cam)),scene,false);
+    const gpuZBits=await gs.readRoadFootprint(),gpuOwner=await gs.readRoadMask();
+    const gpuZ=new Float32Array(gpuZBits.buffer,gpuZBits.byteOffset,gpuZBits.length).slice();
+    return {pose,swZ,swOwner,gpuZ,gpuOwner};
+  };
+  const bands=[['near',0,100],['mid',100,300],['far',300,500]];
+  const emptyRates=()=>Object.fromEntries(bands.map(([name])=>[name,{footprint:0,acceptedBoth:0,flips:0,flipPct:0}]));
+  const pairRates=(a,b,zk,ok)=>{
+    const out=emptyRates();
+    for(let i=0;i<npix;i++){
+      const za=a[zk][i],zb=b[zk][i];if(!(za>0&&zb>0))continue;
+      const z=(za+zb)*0.5;
+      const band=bands.find(([,lo,hi])=>z>=lo&&z<hi);if(!band)continue;
+      const r=out[band[0]];r.footprint++;
+      const oa=a[ok][i]!==0,ob=b[ok][i]!==0;
+      if(oa&&ob)r.acceptedBoth++;
+      if(oa!==ob)r.flips++;
+    }
+    for(const r of Object.values(out))r.flipPct=r.footprint?100*r.flips/r.footprint:0;
+    return out;
+  };
+  const addRates=(sum,r)=>{for(const [name] of bands){sum[name].footprint+=r[name].footprint;sum[name].acceptedBoth+=r[name].acceptedBoth;sum[name].flips+=r[name].flips}};
+  const finishRates=sum=>{for(const r of Object.values(sum))r.flipPct=r.footprint?100*r.flips/r.footprint:0;return sum};
+
+  /* H-UAT-053: reproduce the owner's far-field flicker at a physical ~2 m/s.
+   * These mission-specific start ticks are the diagnosed ordinary handoff
+   * views; pose is reached only by fixed ticks and analog input (no writes). */
+  const startTick=mission.includes('P01')?556:531;
+  let pose=JSON.parse(M.ccall('web_drive_pose','string',[],[])),guard=0;
+  while((pose.tick<startTick||pose.speed<1.70||pose.speed>2.10)&&guard++<160){
+    const throttle=pose.speed<1.85?0.12:(pose.speed>1.98?-0.35:0.05);
+    M._web_drive_analog(throttle,0,0,0);M._web_drive_step();
+    pose=JSON.parse(M.ccall('web_drive_pose','string',[],[]));
+  }
+  if(guard>=160)throw new Error(`could not settle at ~2 m/s: ${JSON.stringify(pose)}`);
+  const controlA=await captureOwners(),controlB=await captureOwners();
+  const control={sw:pairRates(controlA,controlB,'swZ','swOwner'),gpu:pairRates(controlA,controlB,'gpuZ','gpuOwner')};
+  const temporal=[controlB];
+  for(let i=0;i<20;i++){
+    pose=temporal.at(-1).pose;
+    const throttle=pose.speed<1.85?0.12:(pose.speed>1.98?-0.35:0.05);
+    M._web_drive_analog(throttle,0,0,0);M._web_drive_step();
+    temporal.push(await captureOwners());
+  }
+  M._web_drive_analog_off();
+  const swTotal=emptyRates(),gpuTotal=emptyRates();
+  let acceptedEveryPair=true;
+  for(let i=0;i<20;i++){
+    const swPair=pairRates(temporal[i],temporal[i+1],'swZ','swOwner');
+    const gpuPair=pairRates(temporal[i],temporal[i+1],'gpuZ','gpuOwner');
+    acceptedEveryPair&&=swPair.mid.acceptedBoth>0&&gpuPair.mid.acceptedBoth>0;
+    addRates(swTotal,swPair);addRates(gpuTotal,gpuPair);
+  }
+  finishRates(swTotal);finishRates(gpuTotal);
+  const temporalMoved=Math.hypot(temporal.at(-1).pose.x-temporal[0].pose.x,temporal.at(-1).pose.z-temporal[0].pose.z);
+  const controlZero=[control.sw,control.gpu].every(r=>Object.values(r).every(x=>x.flips===0));
+  const farField={pairs:20,moved:+temporalMoved.toFixed(2),start:temporal[0].pose,end:temporal.at(-1).pose,
+    control,sw:swTotal,gpu:gpuTotal,
+    midFootprint:swTotal.mid.footprint>=2000&&gpuTotal.mid.footprint>=2000,
+    acceptedEveryPair,
+    controlZero,slowTraversal:temporalMoved>=1.5&&temporalMoved<=2.5};
+  /* H-UAT-053's acceptance metric is specifically the stable 100-300 m
+   * footprint. Near/far are required reports, not rate gates: the diagnosed
+   * P02 view has only 11 aggregate GPU samples at 300-500 m, so treating its
+   * percentage as an acceptance bound would be knowingly vacuous/flaky. */
+  farField.pass=farField.midFootprint&&farField.acceptedEveryPair&&
+    swTotal.mid.acceptedBoth>0&&gpuTotal.mid.acceptedBoth>0&&
+    farField.controlZero&&farField.slowTraversal&&
+    swTotal.mid.flipPct<=0.25&&gpuTotal.mid.flipPct<=0.50;
+
+  /* Retain H-UAT-052's independent long traversal/anti-heal arms. H-UAT-076a
+   * road-seated the shared authored course, changing P01's ordinary scripted
+   * handoff pose before this renderer arm starts (the contact counter stays
+   * zero). Re-enter the original northbound lane through ordinary analog
+   * steering; do not weaken the live road-pixel floor or write a pose to
+   * recover the old camera composition. */
+  let lanePrepared=true;
+  const lanePrep={required:mission.includes('P01'),ticks:0,
+    playerContactsStart:M._web_player_vehicle_contacts(),x:pose.x,yaw:pose.yaw};
+  if(lanePrep.required){
+    const laneX=2800;
+    lanePrepared=false;
+    while(lanePrep.ticks++<250){
+      pose=JSON.parse(M.ccall('web_drive_pose','string',[],[]));
+      const desired=Math.atan2(-(laneX-pose.x),12);
+      let err=desired-pose.yaw;
+      while(err>Math.PI)err-=2*Math.PI;
+      while(err<-Math.PI)err+=2*Math.PI;
+      if(Math.abs(err)<0.12&&Math.abs(laneX-pose.x)<0.75){
+        lanePrepared=true;
+        break;
+      }
+      const steer=Math.max(-0.50,Math.min(0.50,err*2));
+      const throttle=pose.speed<1.85?0.12:(pose.speed>1.98?-0.35:0.05);
+      M._web_drive_analog(throttle,steer>0?steer:0,steer<0?-steer:0,0);
+      M._web_drive_step();
+    }
+    pose=JSON.parse(M.ccall('web_drive_pose','string',[],[]));
+    lanePrepared=lanePrepared||
+      (Math.abs(pose.yaw)<0.12&&Math.abs(laneX-pose.x)<0.75);
+    Object.assign(lanePrep,{x:pose.x,yaw:pose.yaw,
+      playerContactsEnd:M._web_player_vehicle_contacts()});
+  }
+
+  const samples=[];
+  for(let sample=0;sample<6;sample++){
+    M._web_drive_render();
+    const pose=JSON.parse(M.ccall('web_drive_pose','string',[],[]));
+    const fp=M._web_fb();
+    const indexed=new Uint8Array(M.wasmMemory.buffer).slice(fp,fp+npix);
+    const sw=indexedFrameToRgba(indexed,palette);
+    const road={written:M._terrain_road_pixels_written(),rescued:M._terrain_road_pixels_rescued(),occluded:M._terrain_road_pixels_occluded()};
+    const cam=syncGpu();
+    const gpu=await gs.frame(Float32Array.from(cameraViewProj(cam)),scene,true);
+    const roadMask=await gs.readRoadMask();
+    let gpuRoadPixels=0;for(const owner of roadMask)if(owner!==0)gpuRoadPixels++;
+    const diff=fullFrameDiff(sw,gpu);
+    const roadBand=diff.regions.find(r=>r.name==='road');
+    samples.push({sample,tick:pose.tick,pose,road,swHash:fnv(indexed),gpuRoadPixels,
+      gpuRoadBandOutlierFraction:roadBand?.outlierFraction??1});
+    paint(sw,`${mission} tick ${pose.tick} SW\nroad ${road.written} rejected ${road.occluded}`);
+    paint(gpu,`${mission} tick ${pose.tick} GPU\naccepted road px ${gpuRoadPixels}`);
+    if(sample<5){M._web_drive_analog(1,0,0,0);for(let i=0;i<20;i++)M._web_drive_step()}
+  }
+  M._web_drive_analog_off();
+  const end=samples.at(-1).pose;
+  for(const s of samples)s.distanceBeforeEnd=+Math.hypot(end.x-s.pose.x,end.z-s.pose.z).toFixed(2);
+  const moved=samples[0].distanceBeforeEnd;
+  const stable=samples.every(s=>s.road.written>20000&&s.road.occluded<=Math.max(2000,s.road.written*0.03));
+  const gpuLive=samples.every(s=>s.gpuRoadPixels>1000);
+  /* This moving-camera road band needs a wider 5% drift alarm than rung 1's
+   * pinned frames (still SW-authoritative, still not native fidelity proof).
+   * The reverted implementation reaches 26% as its two owners disagree. */
+  const gpuStable=samples.every(s=>s.gpuRoadBandOutlierFraction<=0.05);
+  const changing=new Set(samples.map(s=>s.swHash)).size>=5;
+  const distances=samples.slice(0,-1).map(s=>s.distanceBeforeEnd);
+  const beforeCoverage=moved>40&&distances.filter(d=>d>10).length>=3;
+  const match=lanePrepared&&stable&&gpuLive&&gpuStable&&changing&&
+    beforeCoverage&&farField.pass;
+  const info=adapter.info?[adapter.info.vendor,adapter.info.architecture,adapter.info.description].filter(Boolean).join(' '):'unknown';
+  M._terrain_road_diagnostics_enable(0);
+  gs.destroy();finish(match?'PASS':'FAIL',{mission,adapter:info,match,
+    lanePrepared,lanePrep,moved:+moved.toFixed(2),stable,gpuLive,gpuStable,
+    changing,beforeCoverage,farField,samples});
+}catch(e){if(e.message!=='__terminal__')finish('FAIL',{mission,reason:String(e.stack||e)})}
+</script>

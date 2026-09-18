@@ -1,0 +1,83 @@
+<!doctype html>
+<!--
+  gpu_scene_probe.html — M6 Tier-2 GPU scene parity probe (self-driving on load).
+
+  What it does (no clicks, no file pickers):
+    1. Feature-detects WebGPU; prints RESULT: SKIP if navigator.gpu is absent.
+    2. Loads ./dist/i76web.mjs (the normal build) and fetches the game data
+       over HTTP (nitro.zfs/zix + miss8/N01.*).
+    3. Gates the Tier-2 export surface: .m16 decode through m16.c
+       (a4tank16.pak#0 via its .pix manifest; loose zhr45101.m16).
+    4. Drives the selected mission to fixed tick 60, then renders the complete
+       software frame (the golden) AND the WebGPU frame (gpu_scene.mjs:
+       textured terrain + roads + scene/car meshes + active HUD, same camera
+       exported from wasm).
+    5. Rung-1 full-frame parity gate plus geometric diagnostics:
+       - the complete software frame (the golden) vs real GPUTexture readback;
+       - per-pixel max-RGB-channel tolerance and fixed sky/terrain/road screen
+         bands (PORT DECISION — drift alarm, not original-game fidelity proof);
+       - camera projection and coverage-mask IoU diagnostics retained from the
+         earlier mirror-subset gate. This is the only place that proves WebGPU.
+    6. Writes per-pattern results into #result and window.__gpuSceneProbe,
+       sets document.title, prints RESULT: PASS/FAIL in #banner.
+
+  Run through tools/public_verify.sh --browser. The driver supplies a local,
+  explicit purchaser-asset route; this page has no fallback asset roots.
+
+  Query params:
+    ?app=<base URL>   required test-data route (must end with /).
+    ?present=0        offscreen-only (no canvas present).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>gpu scene probe — running…</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: dark; }
+  body { background:#0c0e18; color:#e5e5e5; font:14px/1.45 system-ui,sans-serif;
+         margin:0; min-height:100vh; display:flex; flex-direction:column;
+         align-items:center; gap:12px; padding:16px; }
+  h1 { font-size:16px; font-weight:600; margin:4px 0; color:#5adc78;
+       letter-spacing:.04em; }
+  #banner { font:700 20px/1.2 ui-monospace,monospace; padding:10px 18px;
+            border-radius:8px; border:1px solid #2a3352; background:#141828; }
+  #banner.pass { color:#8be39b; border-color:#2a6e3f; }
+  #banner.fail { color:#ff8080; border-color:#8a2f2f; }
+  #banner.skip { color:#e5c07b; border-color:#7a6526; }
+  .row { display:flex; gap:16px; flex-wrap:wrap; justify-content:center; }
+  figure { margin:0; text-align:center; }
+  figcaption { color:#9aa0b5; font-size:12px; text-transform:uppercase;
+               letter-spacing:.06em; margin-top:4px; }
+  canvas { width:640px; height:480px; image-rendering:pixelated;
+           background:#0c0e18; border:1px solid #2a3352; border-radius:4px; }
+  #result { background:#141828; border:1px solid #2a3352; border-radius:8px;
+            padding:12px 16px; max-width:1320px; width:100%; box-sizing:border-box;
+            font:12px/1.4 ui-monospace,monospace; color:#8be39b;
+            white-space:pre-wrap; overflow-wrap:anywhere; }
+  .hint { color:#6b7194; font-size:12px; max-width:1320px; }
+</style>
+</head>
+<body>
+<h1>M6 Tier-2 — GPU scene path parity probe</h1>
+<div id="banner">running…</div>
+<div class="row" id="comparison">
+  <figure>
+    <canvas id="ref" width="640" height="480"></canvas>
+    <figcaption>software full frame — golden</figcaption>
+  </figure>
+  <figure>
+    <canvas id="gpu" width="640" height="480"></canvas>
+    <figcaption>WebGPU full frame — GPUTexture readback</figcaption>
+  </figure>
+</div>
+<pre id="result">…</pre>
+<p class="hint">self-driving on load — see the HTML source header for how to
+serve and invoke. Result JSON lands here, in document.title, and in
+window.__gpuSceneProbe.</p>
+<script type="module">
+import { run } from './tests/gpu_scene_runner.mjs';
+run();
+</script>
+</body>
+</html>
