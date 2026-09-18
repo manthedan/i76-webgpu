@@ -30,7 +30,7 @@ web/assets.js --stage--> Emscripten MEMFS (/data)
                                                            WebGPU
 ```
 
-The software renderer is the reference implementation in this tree. The WebGPU renderer is an experimental second consumer of exported scene data; it is not interchangeable proof that both paths behave identically.
+The software renderer is the reference implementation in this tree. WebGPU is the default driving presentation, with automatic software fallback and explicit `?renderer=sw|gpu` overrides; valid saved preferences are respected. Its exported-scene bridge remains experimental, not proof that both paths behave identically. Menus and non-driving previews stay on Canvas/software.
 
 ## Repository map
 

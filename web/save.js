@@ -41,7 +41,7 @@ function fresh() {
     // per-mission rack (docs/specs/re/p01-loadout-selection.md). The
     // catalog is vcf-keyed here, so the seed is the resolved vcf stem.
     garage: { vcf: 'valepre1' },
-    prefs: { renderer: 'sw', view: 'cockpit' },
+    prefs: { renderer: 'gpu', view: 'cockpit' },
   };
 }
 
@@ -81,6 +81,13 @@ let cur = fresh();
 let note = '';
 let readOnly = false;      // a newer build's record: never overwrite it
 let timer = null;
+
+// An explicit URL choice wins, then a valid saved preference. Unknown values
+// never strand presentation in an unsupported renderer state.
+export function selectRenderer(requested, saved) {
+  const validRenderer = (value) => value === 'gpu' || value === 'sw';
+  return validRenderer(requested) ? requested : validRenderer(saved) ? saved : 'gpu';
+}
 
 export function profile() { return cur; }
 export function notice() { return note; }

@@ -8,6 +8,7 @@ python3 tools/test_source_inventory.py
 python3 tools/test_public_verify.py
 python3 tools/tests/test_portable_ghidra.py
 node web/tests/external_paths_test.mjs
+node web/tests/renderer_choice_test.mjs
 node web/tests/assets_test.mjs
 node web/tests/music_test.mjs
 node web/tests/shell_art_test.mjs

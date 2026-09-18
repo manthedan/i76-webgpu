@@ -1,6 +1,6 @@
-# i76-web — developer preview
+# i76-webgpu — developer preview
 
-**Local development-source candidate; not approved for publication.** See the unresolved provenance and repository-transition review in [PUBLISHING.md](PUBLISHING.md).
+**Private source staging; not approved for public release.** See the unresolved provenance review in [PUBLISHING.md](PUBLISHING.md).
 
 An experimental browser engine compatible with purchaser-owned **Interstate '76 and Nitro Pack** data. The browser is the product path; the unsupported legacy SDL/Vulkan debug frontend is deliberately omitted. This is not a native game build.
 
@@ -8,10 +8,10 @@ An experimental browser engine compatible with purchaser-owned **Interstate '76 
 
 ## Status and limitations
 
-- The engine implements archive/mesh/terrain readers, driving, combat, mission logic, a software renderer, local media decoding and a browser shell.
+- The engine implements archive/mesh/terrain readers, driving, combat, mission logic, WebGPU and reference software renderers, local media decoding and a browser shell.
 - Development has exercised selected missions with automated browser input. That is not human acceptance or campaign completion. P05/P06 browser qualification remains open; P06's experimental controls still fail all-five combat completion. Known arena and P01 active-WIN test failures remain unresolved.
 - The build and asset-free tests below are the public regression baseline. They do not prove a playable mission, faithful original-game behavior or safety of every malformed input.
-- The tested development browser configuration is desktop Chromium on Linux. Other desktop browsers/OSes are unverified; Firefox, Safari and mobile are not supported claims. WebGPU is experimental, not a claim of default hardware-accelerated portability.
+- The tested development browser configuration is desktop Chromium on Linux. Other desktop browsers/OSes are unverified; Firefox, Safari and mobile are not supported claims. WebGPU is the default driving renderer, with automatic software fallback. This does not establish hardware acceleration or cross-browser portability.
 
 ## Build and run
 
@@ -32,6 +32,8 @@ python3 -m http.server 8076 --bind 127.0.0.1
 
 Open **http://localhost:8076/web/**. Do not open the HTML with `file://`.
 Build outputs are local and ignored by Git. See [BUILDING.md](docs/BUILDING.md) for the pinned container recipe and decoder rebuild/relink instructions.
+
+Driving prefers **WebGPU at native display resolution**. Existing saved software preferences remain respected; `?renderer=sw` forces software and `?renderer=gpu` requests WebGPU, without developer mode. Unavailable or failed WebGPU falls back to software; the build footer identifies the visible renderer. Reload to retry GPU after a failure, or use the renderer toggle under `?dev=1`. Menus and non-driving previews continue using Canvas/software. The software renderer remains the reference for fidelity comparisons.
 
 ## Bring your own purchased files
 

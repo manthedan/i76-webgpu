@@ -154,6 +154,8 @@ web/tests/external_paths_test.mjs
 web/tests/gpu_scene_runner.mjs
 web/tests/music_test.mjs
 web/tests/public_surface.mjs
+web/tests/renderer_choice_test.mjs
+web/tests/renderer_default_browser.mjs
 web/tests/replay_validation_test.mjs
 web/tests/shell_art_test.mjs
 web/tests/wasm_smoke.mjs

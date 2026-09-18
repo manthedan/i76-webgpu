@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>i76-web — developer preview</title>
+<title>i76-webgpu — developer preview</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E">
 <link rel="stylesheet" href="shell.css?v=20260813-buildid">
@@ -10,9 +10,9 @@
 </head>
 <body>
 <header class="siteHeader">
-  <h1 class="wordmark" aria-label="i76-web developer preview">
+  <h1 class="wordmark" aria-label="i76-webgpu developer preview">
     <span class="wordmarkName">i76</span>
-    <span class="wordmarkNumber">web</span>
+    <span class="wordmarkNumber">webgpu</span>
     <span class="wordmarkEdition">unfinished developer preview</span>
   </h1>
 </header>
@@ -290,7 +290,7 @@ supplied credits cutscene plays over this screen when it is staged.</pre>
 
 <!-- Development controls: hidden unless the page is opened with ?dev=1.
      Everything here is a diagnostic — a second, unsupervised way into
-     drive mode, the mesh browser, the parked WebGPU path, the topology
+     drive mode, the mesh browser, the renderer toggle, the topology
      view. None of it is part of playing the game. -->
 <aside class="panel" id="devPanel" aria-label="Developer diagnostics" hidden>
   <p class="hint">developer mode (?dev=1) — diagnostics, not gameplay.
@@ -301,7 +301,7 @@ supplied credits cutscene plays over this screen when it is staged.</pre>
     <button id="driveBtn">drive</button>
     <button id="viewBtn">topo / perspective</button>
     <button id="meshModeBtn">meshes</button>
-    <button id="gpuBtn" title="software reference vs experimental WebGPU (textured terrain)">renderer: sw</button>
+    <button id="gpuBtn" title="software reference vs WebGPU (textured terrain)">renderer: gpu</button>
   </div>
   <p class="hint" id="hudInfo"></p>
   <!-- DEV ONLY, not native: the decoded shell exposes Music Level but no
@@ -361,7 +361,7 @@ const BUILD_V = await fetch('dist/stamp.json', { cache: 'no-store' })
   .catch(() => 'dev');
 const I76Web = (await import(`./dist/i76web.mjs?v=${BUILD_V}`)).default;
 import * as Assets from './assets.js?v=20260813-portrait-keys1';
-import * as Save from './save.js?v=20260807-3';
+import * as Save from './save.js?v=20260918-gpu-default';
 import * as ShellArt from './shell-art.js?v=20260813-portrait-keys1';
 
 const W = 640, H = 480;
@@ -374,10 +374,10 @@ const status = (t) => { $('status').textContent = t; };
  * diagnostics OFF, which .has('dev') would not do.
  *
  * This is a reveal, not a security boundary — the controls stay in the
- * DOM inside a hidden panel. What makes it honest is the published
- * artifact allowlist (.github/workflows/pages.yml): the modules the dev
- * controls reach for are not shipped, so revealing them yields the
- * software fallback rather than a hidden feature.
+ * DOM inside a hidden panel. Renderer choice is a normal preference,
+ * independent of DEV; gpu_scene.mjs is a runtime dependency and must
+ * accompany this page in any future application artifact. This source
+ * repository has no deployment workflow.
  */
 const query = new URLSearchParams(location.search);
 const devParam = query.get('dev');
@@ -410,16 +410,16 @@ if (typeof M._web_set_dev_mode === 'function')
   const el = $('buildId');
   el.textContent = 'build ' + id;
   el.hidden = false;
-  /* H-UAT-036 lesson: the renderer pref is sticky across sessions, and
-   * an invisible GPU renderer produced a false owner bug report. Keep
-   * the choice visible: the footer names the active renderer whenever
-   * it is not the software default, and updates on toggle. */
+  /* Name the visible renderer, including software fallback, rather than
+   * merely the saved preference. Canvas state is initialized later, so
+   * the badge fails soft during module startup. */
   window.__footerRenderer = () => {
-    /* `renderer` is a let declared later in this module — referencing
-     * it before initialization throws (TDZ), so the badge fails soft
-     * until the toggle code calls this again after init. */
     try {
-      el.textContent = 'build ' + id + (renderer === 'gpu' ? ' · gpu' : '');
+      const active = !$('gamePanel').hidden && gpuCanvas &&
+                     gpuCanvas.style.display !== 'none' &&
+                     $('screen').style.display === 'none' ? 'gpu' : 'sw';
+      const text = 'build ' + id + ' · ' + active;
+      if (el.textContent !== text) el.textContent = text;
     } catch { el.textContent = 'build ' + id; }
   };
 }
@@ -637,18 +637,16 @@ let yaw = 0.6, zoom = 1.0, spin = true, last = performance.now();
 let mode = 'mesh', dist = -1, terrainView = 0;
 let ctx, img, d32;
 
-// ---- M6 Tier-2: ?renderer=gpu drive-mode WebGPU path ------------------
+// ---- Default drive-mode WebGPU path; automatic software fallback ----
 // gpu_scene.mjs renders the engine's experimental terrain/scene bridge
 // (.map/.m16 textures plus the exported camera). Software stays authoritative.
 // The GPU path draws into its own canvas swapped in over #screen only
 // while drive mode is active under the gpu renderer.
-// ?renderer=gpu|sw wins; otherwise the last choice sticks (localStorage).
-// WebGPU remains an explicit developer renderer choice; when selected, its
-// product presentation defaults to native physical canvas resolution. Gate 32
-// names ?dev=1&gpures=fidelity and retains the immutable 640x480 parity path.
-let renderer = DEV ? (new URLSearchParams(location.search).get('renderer') ||
-                      progress.prefs.renderer || 'sw')
-                   : 'sw';
+// A valid ?renderer=gpu|sw wins, then a valid saved preference, otherwise GPU.
+// This choice is available on ordinary visits; diagnostics still require DEV.
+// GPU defaults to native physical canvas resolution. The reference path stays
+// ?dev=1&gpures=fidelity, with its immutable 640x480 parity target.
+let renderer = Save.selectRenderer(query.get('renderer'), progress.prefs.renderer);
 let gpuScene = null, gpuMod = null, gpuDraws = null;
 let gpuCanvas = null, gpuStarting = false, gpuDirty = true, gpuFailed = false;
 let gpuViewDirty = true, gpuTarget = null;
@@ -683,6 +681,7 @@ function gpuRelease() {
   gpuLodCell = null; gpuTarget = null;
   gpuDirty = true; gpuViewDirty = true;
   $('screen').style.display = '';
+  window.__footerRenderer?.();
 }
 
 /* Full failure teardown. Stays failed until an explicit renderer retry. */
@@ -830,6 +829,9 @@ function gpuFrame() {
   frameScene.frame(gpuMod.cameraViewProj(
                      cam, frameScene.w, frameScene.h, frameScene.worldOrigin),
                    gpuDraws, false, mirror)
+    // Submission can fail after frame() has encoded successfully (including
+    // browser presentation failures). Observe completion, not only encoding.
+    ?.then?.(() => frameScene.device.queue.onSubmittedWorkDone())
     ?.catch?.((e) => {
       /* A DPR resize may retire this immutable target while its submission is
        * settling. A stale rejection must never tear down the replacement. */
@@ -854,6 +856,7 @@ function blit() {
     /* Phase D: bilinear present for GPU (software stays pixelated). */
     gpuCanvas.style.imageRendering = 'auto';
     $('screen').style.display = 'none';
+    window.__footerRenderer?.();
     if (DEV) window.__i76.gpuTarget = {
       ...gpuTarget, pointSampled: gpuScene.pointSampled,
       cssWidth: gpuCanvas.clientWidth, cssHeight: gpuCanvas.clientHeight,
@@ -864,6 +867,7 @@ function blit() {
     return;
   }
   if (gpuCanvas) { gpuCanvas.style.display = 'none'; $('screen').style.display = ''; }
+  window.__footerRenderer?.();
   if (mode === 'mission') M._web_mission_render(yaw, dist);
   else if (mode === 'mesh') M._web_render(yaw, zoom);
   // drive: web_drive_render already wrote the fb in step()
@@ -960,6 +964,7 @@ function step(dt) {
   // changes when the shell state actually flips.
   const st = M._web_shell_update();
   if (st !== shellState) onShellState(st);
+  window.__footerRenderer?.();
   if (spin && mode !== 'drive') yaw += dt * 0.8;
   if (paused && mode === 'drive') {
     /* Keep the last world frame under the escape paper; re-composite so

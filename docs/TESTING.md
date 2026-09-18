@@ -117,6 +117,40 @@ not fetch assets and has no test `run()` or Node tail. The browser-only test
 orchestration is in `web/tests/gpu_scene_runner.mjs`; the page imports that
 module and requires explicit `?app=` data routing.
 
+### Normal-page WebGPU default and software fallback
+
+```sh
+NITRO_APP=/absolute/owned/app CHROME=/absolute/path/to/chrome \
+  node web/tests/renderer_default_browser.mjs /absolute/external/new-renderer-smoke
+```
+
+This separate opt-in check enters stock P01 through ordinary file intake and
+shell controls, without `dev=1` or engine-state injection. Fresh browser contexts
+cover bare-page WebGPU, explicit `?renderer=sw`, a saved software preference,
+a deliberately missing `navigator.gpu`, and a rejected GPU submission-completion
+promise. Ordinary Space skips the opening sequence before checking driving frames. It checks nonempty rendered canvases, native-resolution GPU at
+DPR 2, software fallback, visible renderer labels and page errors. It records
+browser mode, flags, adapter information and compositor capabilities. The test
+stages archives, campaign and mission files, not a complete installation; it is
+not a HUD/media-completeness or mission acceptance test. Screenshots and logs
+stay in the fresh external output directory. No adapter is SKIP/3; failure after
+an acquired adapter is FAIL/1. SwiftShader does not prove consumer GPU support.
+
+The default mode is headless. An offscreen WebGPU PASS does **not** establish
+canvas presentation: some Linux headless configurations acquire a device but
+cannot create the browser's shared presentation image. Those failures stay FAIL,
+not SKIP. For a headed Vulkan presentation check, use `I76_BROWSER_MODE=vulkan-headed`
+with a display (or `xvfb-run -a node ...`). This development preset enables Vulkan
+and bypasses Chromium's GPU blocklist; it is not stock-browser qualification.
+If multiple Vulkan drivers are installed, an explicit `VK_ICD_FILENAMES` may
+select the intended system ICD. Record that environment with the run. One tested
+configuration is Chrome 151 / NVIDIA RTX 3090 / driver 580.173.02 with a selected
+NVIDIA ICD and Xvfb; it is not a consumer hardware/browser support matrix.
+
+`tools/check.sh` also runs the asset-free `renderer_choice_test.mjs`: fresh GPU
+preferences, saved software choices, URL precedence, invalid values and storage
+failure. Its static page checks are not browser qualification.
+
 ## Individual developer commands
 
 The public entry point is preferred because it enforces fresh external output.

@@ -1,5 +1,5 @@
 {
-  "name": "i76-web",
+  "name": "i76-webgpu",
   "private": true,
   "type": "module",
   "engines": { "node": ">=22.12.0" },
