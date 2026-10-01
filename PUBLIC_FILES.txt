@@ -86,6 +86,7 @@ third_party/libsmacker/smacker.h
 third_party/libsmacker/smk_malloc.h
 tools/ai_race_entry_probe.c
 tools/build_probe.sh
+tools/build_site.sh
 tools/check.sh
 tools/check_owned.sh
 tools/check_source.py

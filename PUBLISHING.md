@@ -1,6 +1,6 @@
 # Publishing
 
-This repository, `https://github.com/manthedan/i76-webgpu`, is the public source home of the browser port. It publishes **source only**. There are no Pages deployments, release binaries or hosted builds.
+This repository, `https://github.com/manthedan/i76-webgpu`, is the public source home of the browser port. It publishes source, plus one hosted browser build at https://i76-webgpu.netlify.app. There are no release binaries or Pages deployments.
 
 ## Decoded numeric tables
 
@@ -21,4 +21,4 @@ These are behavior and mapping data, not game archives or media. On 2026-10-01 t
 
 ## Binaries and hosting
 
-Distributing a compiled build (Wasm, a hosted page or Pages) is a separate decision. It requires the LGPL obligations for libsmacker to be met, including matching source and rebuild/relink materials (see [BUILDING.md](docs/BUILDING.md)), plus the applicable toolchain runtime notices.
+The hosted build is assembled only by `tools/build_site.sh` from a clean checkout of a published commit, and deployed as-is. That script serves the commit's complete source tarball, the LGPL text and these notices beside the Wasm, which is how the libsmacker LGPL obligations are met (see [BUILDING.md](docs/BUILDING.md)). Any other compiled distribution (release binaries, mirrors) is a separate decision with the same obligations.

@@ -18,7 +18,7 @@ Thank you, Roanish, for making this work possible.
 
 The browser build links this decoder into WebAssembly. It decodes movies/audio supplied locally by the purchaser; no movie data accompanies the source.
 
-If you distribute a compiled build, retain prominent notices, the LGPL text and complete corresponding library source, including your changes. Provide the matching application source/build materials needed to rebuild and relink a modified decoder, as required by the applicable LGPL terms. A lone Wasm file or hosted page is not a substitute. See [rebuild/relink instructions](docs/BUILDING.md). This candidate distributes source only; it has no binary download or hosted source-offer URL.
+If you distribute a compiled build, retain prominent notices, the LGPL text and complete corresponding library source, including your changes. Provide the matching application source/build materials needed to rebuild and relink a modified decoder, as required by the applicable LGPL terms. A lone Wasm file or hosted page is not a substitute. See [rebuild/relink instructions](docs/BUILDING.md). The hosted build at https://i76-webgpu.netlify.app is such a distribution. Every deployment serves the complete source of its exact commit from the same site, at `/source/i76-webgpu-source.tar.gz` (commit in `/source/COMMIT`; the page footer shows the same build id), alongside these notices and the LGPL text. `tools/build_site.sh` produces that site from a clean checkout.
 
 ## Compression
 

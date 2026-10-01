@@ -4,7 +4,7 @@ A browser port of Interstate '76, built on the shoulders of the I'76 community. 
 
 An experimental browser engine compatible with purchaser-owned **Interstate '76 and Nitro Pack** data. The browser is the product path; the unsupported legacy SDL/Vulkan debug frontend is deliberately omitted. This is not a native game build.
 
-**Unfinished, source-only preview.** Publishing this code does not mean that either campaign is complete. No game archives, executables, missions, textures, screenshots, audio or movies are included. There is no hosted demo or downloadable game binary in this source release.
+**Unfinished, source-only preview.** Publishing this code does not mean that either campaign is complete. No game archives, executables, missions, textures, screenshots, audio or movies are included. A hosted build runs at **https://i76-webgpu.netlify.app** (bring your own game files; see below). There is no downloadable game binary.
 
 ## Status and limitations
 

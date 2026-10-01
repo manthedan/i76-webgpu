@@ -17,7 +17,7 @@ Only the source checkout is mounted; no purchaser files are required. Pulling th
 
 The outputs are `web/dist/i76web.mjs`, `web/dist/i76web.wasm` and `web/dist/stamp.json`. The build identifies a Git checkout by its short commit ID; an archive without Git metadata reports `unknown`. This is build identification, not a claim of byte-for-byte reproducibility across toolchains or commit IDs.
 
-The `web/` shell also needs its checked-in JavaScript and styles. Serve the repository root using the README command. Do not upload a developer working directory or publish build outputs accidentally; this preview has no deployment workflow.
+The `web/` shell also needs its checked-in JavaScript and styles. Serve the repository root using the README command. Do not upload a developer working directory or publish build outputs accidentally. The hosted build is produced only by `tools/build_site.sh <new-output-dir>`, which refuses a dirty checkout and copies an explicit allowlist plus the commit's source tarball.
 
 ## Test scope
 
@@ -43,4 +43,4 @@ The library is linked from source directly by `web/build.sh`; there is no separa
 4. Run the asset-free tests, then test your decoder with your own `.smk` files through the local page. Do not add those movies or captured frames to the repository.
 5. Use the newly built loader, Wasm and stamp together; reload the page to avoid stale cached code.
 
-Before distributing a binary, publish its matching complete source and build instructions, preserve applicable toolchain/runtime notices, and link the binary to that source and LGPL text. These instructions enable a source rebuild/relink; they are not a substitute for reading the applicable licence requirements. No binary distribution is made by this source-only preview.
+Before distributing a binary, publish its matching complete source and build instructions, preserve applicable toolchain/runtime notices, and link the binary to that source and LGPL text. These instructions enable a source rebuild/relink; they are not a substitute for reading the applicable licence requirements. The hosted build at https://i76-webgpu.netlify.app follows this: each deployment serves its exact source at `/source/`.
