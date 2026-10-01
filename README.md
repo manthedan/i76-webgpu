@@ -1,6 +1,6 @@
 # i76-webgpu — developer preview
 
-**Private source staging; not approved for public release.** See the unresolved provenance review in [PUBLISHING.md](PUBLISHING.md).
+A browser port of Interstate '76, built on the shoulders of the I'76 community. **[Credits and shout-outs](#credits-and-shout-outs)** are below.
 
 An experimental browser engine compatible with purchaser-owned **Interstate '76 and Nitro Pack** data. The browser is the product path; the unsupported legacy SDL/Vulkan debug frontend is deliberately omitted. This is not a native game build.
 
@@ -66,8 +66,22 @@ Start with [Architecture](docs/ARCHITECTURE.md), [Formats](docs/FORMATS.md), [De
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting changes or files.
 
-## Credit and licensing
+## Credits and shout-outs
 
-This project began as a fork of **[Roanish/i76](https://github.com/Roanish/i76)**. Its archive, mesh, font and platform foundations owe a great deal to Roanish's work and explicit permission. Preserve that attribution and the [recorded upstream grant](docs/legal/roanish-grant.md).
+This is a deep, long-lived community, and this port wouldn't exist without the people who dug into this game before us. If you think you deserve credit here and aren't listed, please open an issue.
 
-Our own contributions are MIT. Upstream portions rest on their recorded permission, not a licence we can apply on someone else's behalf. The vendored Smacker decoder is **LGPL-2.1-or-later**, not MIT. See [LICENSE](LICENSE), [THIRD-PARTY.md](THIRD-PARTY.md), and the decoder's [COPYING](third_party/libsmacker/COPYING).
+- **[Roanish](https://github.com/Roanish)**, for **[Roanish/i76 ("Vigalante '76")](https://github.com/Roanish/i76)**. This project began as a fork of it. The archive, VFS, mesh, font and platform foundations all come from Roanish's work, which they generously told us to "go ham" with ([issue #1](https://github.com/Roanish/i76/issues/1), [recorded here](docs/legal/roanish-grant.md)). A massive shout-out, as promised.
+- **"That Tony"** ([Hacking on Space](https://hackingonspace.blogspot.com/)) did excellent foundational work deserializing the game binaries and the ZFS/VFS systems. Much of the inspiration came from there.
+- **David Hopkinson, aka "Hopper"**, for *Hopper's Guide*, which went deep on the model and texture-mapping side of things.
+- **[Open76](https://github.com/r1sc/Open76)**, for its format and behavior research (used as reference only; no code imported).
+- **[i76-everywhere](https://github.com/therealjkvalentine/i76-everywhere)**, for compatibility, tooling and behavior reference.
+- **Shane Peelar**, **UCyborg** (AiO patch), **immi101** (i76fix) and the **MechVM** folks, for years of interoperability research that kept these games running.
+- **Greg Kennedy and contributors** for [libsmacker](https://github.com/JonnyH/libsmacker), which plays the game's movies and audio.
+- **[netherite](https://github.com/Infatoshi/netherite)**, for verification-methodology inspiration (no code imported).
+- And of course **Activision** and the original Interstate '76 team, for making the game in the first place. Buy it on [GOG](https://www.gog.com/game/interstate76).
+
+More detail on each of these is in [THIRD-PARTY.md](THIRD-PARTY.md).
+
+## Licensing
+
+Our own contributions are MIT. Upstream portions rest on Roanish's [recorded permission](docs/legal/roanish-grant.md), not on a licence we can apply on their behalf. The vendored Smacker decoder is **LGPL-2.1-or-later**, not MIT. Some numeric lookup tables were decoded from the original executable for compatibility; see [Provenance](docs/PROVENANCE.md). See [LICENSE](LICENSE), [THIRD-PARTY.md](THIRD-PARTY.md), and the decoder's [COPYING](third_party/libsmacker/COPYING).

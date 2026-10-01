@@ -39,7 +39,7 @@ Please report missing credit or provenance concerns. Do not submit copied implem
 
 ## Game data and toolchain
 
-Interstate '76/Nitro Pack and the purchaser's game data are not licensed by this project. No purchaser archives, game executables or converted media are included. Retained executable-derived numeric tables have a separate unresolved [provenance hold](docs/PROVENANCE.md). The original titles are used to describe compatibility; there is no affiliation with or endorsement by Activision or Microsoft.
+Interstate '76/Nitro Pack and the purchaser's game data are not licensed by this project. No purchaser archives, game executables or converted media are included. Two retained executable-derived numeric tables are documented in [Provenance](docs/PROVENANCE.md). The original titles are used to describe compatibility; there is no affiliation with or endorsement by Activision or Microsoft.
 
 Emscripten/LLVM, Node, Python and native compilers are separately installed build/test tools, not vendored dependencies. The toolchain also supplies runtime/system-library code when you build a binary; preserve its applicable notices when distributing that binary. The supported application build is the browser; the native diagnostic probes are not a separate native game frontend.
 

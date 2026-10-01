@@ -23,10 +23,10 @@ The source attributes this table to `DAT_004c7138` and `FUN_00408ac0`. `dest68_p
 
 These are **known examples, not an exhaustive copyright/provenance audit**. Nearby AI destination/weight arrays and other annotated constants also need to be considered in any assessment of decoded behavior data. Small size or functional purpose does not by itself settle the legal question, and the presence of a native address does not by itself establish infringement.
 
-## Publication decision needed
+## Owner decision (2026-10-01)
 
-Keep the current tables intact while assessing their origin, functional role and applicable redistribution/interoperability grounds. Record the basis and owner approval for any decision to retain them. If replacement is necessary, document an independently justified derivation and validate its behavior; do not merely re-encode copied numbers or silently remove gameplay. A separate regression evidence set must distinguish exact compatibility from an intentional port behavior change.
+The project owner reviewed the two tables above and chose to keep them unchanged in the public source. This records a deliberate risk acceptance, not a legal conclusion. If replacement ever becomes necessary, document an independently justified derivation and validate its behavior. Do not merely re-encode copied numbers or silently remove gameplay.
 
 The public technical notes describe the current implementation and its limits. They are not transcripts of manuals, guides, native program decompilations or a complete formal specification. No legal conclusion should be inferred from a compiler, source inventory, scanner, code review or passing mission test.
 
-Publication remains governed by [PUBLISHING.md](../PUBLISHING.md). The known questions above have not been resolved by this preparation work.
+See [PUBLISHING.md](../PUBLISHING.md) for the rules that apply to published changes.

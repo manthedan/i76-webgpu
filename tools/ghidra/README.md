@@ -51,8 +51,8 @@ JDK 21. Point `--analyze-headless` at
    binaries, Ghidra databases, decompiled output, coverage captures, or other
    derived artifacts without a separate provenance/legal review.
 
-The source project's unresolved native-table provenance hold remains unresolved.
-This toolkit is not legal clearance and does not change that hold.
+Decoded native tables retained in the source are covered by the owner decision in [Provenance](../../docs/PROVENANCE.md).
+This toolkit is not legal clearance.
 
 ## Create your own analysis project
 
