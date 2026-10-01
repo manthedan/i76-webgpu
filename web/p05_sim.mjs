@@ -24,6 +24,10 @@ import I76Web from './dist/i76web.mjs';
 const APP = process.env.NITRO_APP;
 if (!APP?.endsWith('/')) throw new Error('Set NITRO_APP explicitly, with trailing /');
 const MODE = process.argv[2] || 'both';
+if (!['win', 'lose', 'both'].includes(MODE)) {
+  console.error(`usage: mode must be win, lose or both (got ${JSON.stringify(MODE)})`);
+  process.exit(2);
+}
 const M = await I76Web();
 
 M.FS.mkdir('/data');

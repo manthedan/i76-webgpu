@@ -76,7 +76,9 @@ const assets = {
   zfs: namedFile(APP, 'nitro.zfs'),
   campaign: namedFile(path.join(APP, 'addon'), 'SCENARIO.DAT'),
   missions: readdirSync(missDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && /\.(?:msn|cbt|rac|cf\d)$/i.test(entry.name))
+    /* The whole folder, as the README instructs: missions also need their
+     * loose .TER/.PCF files. */
+    .filter((entry) => entry.isFile())
     .map((entry) => path.join(missDir, entry.name))
     .sort((a, b) => a.localeCompare(b)),
 };
@@ -110,15 +112,18 @@ async function startServer() {
   }
 }
 
+/* A signalled exit leaves exitCode null and sets signalCode instead. */
+const hasExited = (child) => child.exitCode !== null || child.signalCode !== null;
+
 async function stopServer(child) {
-  if (!child || child.exitCode !== null) return;
+  /* A child that failed to spawn has no pid and may never emit 'exit'. */
+  if (!child || child.pid === undefined || hasExited(child)) return;
   const exited = once(child, 'exit');
   child.kill('SIGTERM');
   await Promise.race([exited, sleep(3000)]);
-  if (child.exitCode === null) {
-    const killed = once(child, 'exit');
+  if (!hasExited(child)) {
     child.kill('SIGKILL');
-    await killed;
+    await Promise.race([exited, sleep(3000)]);
   }
 }
 

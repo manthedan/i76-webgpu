@@ -12,6 +12,7 @@ prog = currentProgram
 listing = prog.getListing()
 space = prog.getAddressFactory().getDefaultAddressSpace()
 decomp = DecompInterface()
+failed = 0
 try:
     if not decomp.openProgram(prog):
         raise RuntimeError("decompiler could not open current program")
@@ -21,12 +22,14 @@ try:
             print("===== FUNCTION <none> @ %s =====" % addr_s)
             print("ADDRESS OUTSIDE PROGRAM MEMORY")
             print("===== END =====")
+            failed += 1
             continue
         fn = listing.getFunctionContaining(addr)
         if fn is None:
             print("===== FUNCTION <none> @ %s =====" % addr_s)
             print("NO EXISTING FUNCTION CONTAINING %s" % addr_s)
             print("===== END =====")
+            failed += 1
             continue
         print("===== FUNCTION %s @ %s =====" % (fn.getName(), fn.getEntryPoint()))
         res = decomp.decompileFunction(fn, 120, monitor)
@@ -38,7 +41,12 @@ try:
                       (MAX_CHARS_PER_FUNCTION, len(text)))
         else:
             print("DECOMPILE FAILED: %s" % res.getErrorMessage())
+            failed += 1
         print("===== END =====")
 finally:
     decomp.dispose()
+# Partial output above stays useful, but any failed entry withholds the
+# success marker so the launcher reports the batch as failed.
+if failed:
+    raise RuntimeError("%d of %d addresses failed to decompile" % (failed, len(args)))
 print("I76_GHIDRA_SCRIPT_OK: decomp_many.py")

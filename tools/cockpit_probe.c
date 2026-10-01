@@ -865,8 +865,9 @@ int main(int argc, char **argv)
     check(combat_target_marker(tpos) == 1,
           "target marker picks the staged in-cone hostile");
     scene_dyn_clear();
-    worldrender_camera(fb, W, H, &cockpit, COCKPIT_NEAR, 0.0,
-                       have_terrain, have_scene);
+    /* Terrain and scene were unloaded above: say so, rather than asking
+     * the renderer to traverse torn-down mission state. */
+    worldrender_camera(fb, W, H, &cockpit, COCKPIT_NEAR, 0.0, 0, 0);
     CombatFx snap[COMBAT_FX_MAX];
     memcpy(fb2, fb, (size_t)W * H);
     int nfx = combat_fx_snapshot(snap, COMBAT_FX_MAX);

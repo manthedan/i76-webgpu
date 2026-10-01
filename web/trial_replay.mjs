@@ -335,6 +335,13 @@ for (let li = 0; li < tape.length; li++) {
     break;
   }
 
+  /* >>> 0 below would coerce a missing or malformed mask into "no input". */
+  const mask = (v) => Number.isSafeInteger(v) && v >= 0 && v <= 0xffffffff;
+  if (!mask(line.held) || !mask(line.pressed)) {
+    fail(`tape line ${li}: held/pressed must be 32-bit unsigned integer masks`);
+    break;
+  }
+
   /* Page events stamped T happened after tape line T. Apply every recover
    * strictly before the next line so its deterministic sim-history lookup is
    * in the same place as recording. Other event kinds are presentation or
@@ -355,6 +362,9 @@ for (let li = 0; li < tape.length; li++) {
       advanced = true;
       for (const f of POSE_FIELDS) {
         if (!Number.isFinite(p[f])) { fail(`tick ${line.tick}: ${f} not finite`); break; }
+        /* A missing recorded value would make every d > TOL comparison
+         * false (NaN) and report a silent PASS. */
+        if (!Number.isFinite(line[f])) { fail(`tick ${line.tick}: tape ${f} missing or not finite`); break; }
         const d = Math.abs(p[f] - line[f]);
         if (f === 'x' || f === 'z') maxPosDrift = Math.max(maxPosDrift, d);
         if (d > TOL) {
@@ -369,7 +379,9 @@ for (let li = 0; li < tape.length; li++) {
         while (viewIdx < viewEvents.length && viewEvents[viewIdx].tick <= line.tick)
           M._web_drive_preset(viewEvents[viewIdx++].preset);
         const mk = markerByTick.get(line.tick);
-        if (mk) {
+        if (mk && !(Number.isSafeInteger(mk.seq) && mk.seq >= 0)) {
+          fail(`tick ${line.tick}: marker seq must be a nonnegative integer`);
+        } else if (mk) {
           const name = `marker-${mk.seq}-tick-${mk.tick}.png`;
           dumpFrame(name);
           info(`wrote ${name}`);

@@ -571,7 +571,20 @@ static void test_texture_cutout(void)
      * because a discarded fragment writes no depth to occlude with. */
     RVert back[4];
     quad(back, 20.0, 0.0f, 0.0f, 1.0f, 1.0f);
-    RTex opaque = tile_uv();
+    /* The backdrop needs its own texels: tile_uv() rewrites g_tile_px,
+     * which still backs the keyed cut-out texture tx. */
+    static uint8_t back_px[TILE_W * TILE_H];
+    for (int i = 0; i < TILE_W * TILE_H; i++) back_px[i] = (uint8_t)(16 + i);
+    RTex opaque = tx;
+    opaque.texels = back_px;
+    opaque.has_key = 0;
+    check(tx.texels[0] == RASTER_TEXEL_TRANSPARENT,
+          "the cut-out keeps its transparent texels for this regression");
+
+    t = fresh();
+    raster_polygon_tex(&t, v, 4, 100, &tx, 1);          /* cut-out alone */
+    uint8_t near_only[W * H];
+    memcpy(near_only, g_color, sizeof near_only);
 
     t = fresh();
     raster_polygon_tex(&t, back, 4, 100, &opaque, 0);   /* far first */
@@ -585,8 +598,12 @@ static void test_texture_cutout(void)
     check(memcmp(far_first, g_color, sizeof far_first) == 0,
           "a cut-out over a solid surface is submission-order independent");
 
+    /* The farther quad projects inside the near quad's footprint, so a
+     * pixel that is empty with the cut-out alone but drawn with the
+     * backdrop is the backdrop seen through a hole. */
     int through = 0;
-    for (int i = 0; i < W * H; i++) if (far_first[i]) through++;
+    for (int i = 0; i < W * H; i++)
+        if (!near_only[i] && far_first[i]) through++;
     check(through > 0, "the surface behind the cut-out is visible through it");
 }
 

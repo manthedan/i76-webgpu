@@ -31,6 +31,10 @@ import { p19EngagementTarget, p19EngagementSpeed, p19SteeringBand,
 const APP = process.env.NITRO_APP;
 if (!APP?.endsWith('/')) throw new Error('Set NITRO_APP explicitly, with trailing /');
 const MODE = process.argv[2] || 'both';
+if (!['win', 'lose', 'both'].includes(MODE)) {
+  console.error(`usage: mode must be win, lose or both (got ${JSON.stringify(MODE)})`);
+  process.exit(2);
+}
 
 const M = await I76Web();
 M.FS.mkdir('/data');
@@ -91,7 +95,7 @@ function bootMission() {
   for (let t = 0; t < 4000; t++) {
     M._web_drive_step();
     const lc = j('web_drive_lifecycle_state');
-    if (lc.tick >= 20 && lc.tick % 25 === 0) tapKey(KEY.space);
+    if (lc.tick >= 20 && lc.tick % 25 === 0) tapKey(KEY.fire);   /* Space: fire also dismisses the intro */
     if (!lc.cam && lc.tick > 40) return lc.tick;
   }
   throw new Error('intro never released');

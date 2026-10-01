@@ -16,6 +16,7 @@ import socket
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 
@@ -90,18 +91,26 @@ def _runtime_root(configured, binding):
 
     identity_path = root / "binding.json"
     expected = json.dumps(binding, sort_keys=True, indent=2) + "\n"
+    # Publish the binding complete or not at all: write a private temporary
+    # file, then hard-link it into place (EEXIST if another client won), so a
+    # concurrent first request never reads an empty or partial binding.
+    descriptor, temporary = tempfile.mkstemp(dir=str(root), prefix=".binding-")
     try:
-        descriptor = os.open(str(identity_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        try:
-            actual = identity_path.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise QueryError("cannot read service namespace binding: %s" % exc)
-        if actual != expected:
-            raise QueryError("service namespace binding mismatch: %s" % identity_path)
-    else:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             stream.write(expected)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, str(identity_path))
+        except FileExistsError:
+            try:
+                actual = identity_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise QueryError("cannot read service namespace binding: %s" % exc)
+            if actual != expected:
+                raise QueryError("service namespace binding mismatch: %s" % identity_path)
+    finally:
+        os.unlink(temporary)
     return base, root
 
 
@@ -332,6 +341,19 @@ def start_service(args, paths):
                          (args.startup_timeout, paths["log"]))
 
 
+def _ensure_service(args, paths):
+    """Return (status, cold_started) for a service ready to take a request."""
+    state, status = service_state(paths)
+    if state == "stopped" and args.no_start:
+        raise QueryError("Ghidra service is not running (--no-start)")
+    # A tracked process without a socket is still cold-starting, and its
+    # starter holds the startup lock until the socket is ready: wait there
+    # rather than connecting to a socket that does not exist yet.
+    if state == "stopped" or (state == "busy" and not paths["socket"].exists()):
+        return start_service(args, paths)
+    return status, False
+
+
 def _request(verb, args, query, transport):
     return {
         "schema": REQUEST_SCHEMA,
@@ -488,12 +510,7 @@ def main(argv=None):
         if depth is not None and (depth < 1 or depth > MAX_DEPTH):
             raise QueryError("--depth must be in [1, %d]" % MAX_DEPTH)
 
-        state, status = service_state(paths)
-        started = False
-        if state == "stopped":
-            if args.no_start:
-                raise QueryError("Ghidra service is not running (--no-start)")
-            status, started = start_service(args, paths)
+        status, started = _ensure_service(args, paths)
         # A busy serial daemon is healthy: send the real request and let it
         # wait in the Unix-socket backlog instead of racing a cold start.
         query = {"top_k": top}

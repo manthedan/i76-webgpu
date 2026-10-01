@@ -14,6 +14,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 READ_ONLY_SCRIPTS = {
     "decomp_at.py",
@@ -207,11 +208,22 @@ def _terminate_invocation(process: subprocess.Popen) -> None:
             return
     else:
         process.terminate()
+    deadline = time.monotonic() + 5
     try:
         process.wait(timeout=5)
-        return
     except subprocess.TimeoutExpired:
         pass
+    if os.name == "posix":
+        # The launcher may exit before its descendants (Java, helpers), so
+        # the grace period applies to the whole group, not only its leader.
+        while time.monotonic() < deadline:
+            try:
+                os.killpg(process.pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.1)
+    elif process.poll() is not None:
+        return
     if os.name == "posix":
         try:
             os.killpg(process.pid, signal.SIGKILL)

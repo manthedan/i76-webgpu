@@ -17,14 +17,15 @@ import path from 'node:path';
 import { externalPath, loopbackPage, newOutputDir } from './tests/external_paths.mjs';
 
 const PAGE = process.argv[2];
-const LOG_DIR = process.argv[3];
+const LOG_DIR_ARG = process.argv[3];
 const APP_INPUT = process.env.NITRO_APP;
-if (!PAGE || !LOG_DIR || !APP_INPUT) {
+if (!PAGE || !LOG_DIR_ARG || !APP_INPUT) {
   console.error('usage: NITRO_APP=/owned/app node full_frame_parity.mjs <page-url> <new-output-dir>');
   process.exit(1);
 }
 loopbackPage(PAGE);
-newOutputDir(LOG_DIR);
+/* Write only beneath the canonical directory validation reserved. */
+const LOG_DIR = newOutputDir(LOG_DIR_ARG);
 const CASES = [
   { tag: 'p01-world', mission: 'miss8/P01.MSN', view: 'chase', tick: 60 },
   { tag: 'n01-world', mission: 'miss8/N01.CBT', view: 'chase', tick: 60 },
@@ -333,6 +334,7 @@ try {
   if (browser) await browser.close().catch(() => {});
 }
 
-if (skipped) process.exit(2);
+/* A detected regression outranks a later case's missing adapter. */
 if (failed) process.exit(1);
+if (skipped) process.exit(2);
 console.log(`RESULT: PASS (${CASES.length} cases checked; SW golden + live view cycle)`);

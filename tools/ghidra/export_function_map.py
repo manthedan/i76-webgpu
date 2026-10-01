@@ -5,9 +5,9 @@
 # JSON result. It does not import coverage or mutate the project.
 
 import json
-import os
-from java.io import File, FileOutputStream, OutputStreamWriter
-from java.nio.file import Files
+from java.io import File, OutputStreamWriter
+from java.nio.channels import Channels, FileChannel
+from java.nio.file import Files, LinkOption, StandardOpenOption
 from ghidra.framework import Application
 
 SCHEMA = "ghidra-function-map-v1"
@@ -47,9 +47,6 @@ parent = output.getParentFile()
 if parent is None or not parent.isDirectory():
     fail("output parent directory does not exist")
 
-temp = File(output.getPath() + ".tmp-%d" % os.getpid())
-if temp.exists():
-    fail("temporary output already exists")
 
 program_sha256 = currentProgram.getExecutableSHA256()
 if program_sha256 is None or len(str(program_sha256)) != 64:
@@ -111,14 +108,20 @@ payload = {
               for caller, callee in sorted(calls)],
 }
 
+# Exclusive, unpredictable temporary file (createTempFile uses O_EXCL), then
+# reopened without following links, so a shared output directory cannot
+# redirect this write through a planted symlink.
+temp_path = Files.createTempFile(parent.toPath(), output.getName() + ".", ".tmp")
+temp = temp_path.toFile()
 writer = None
 try:
-    stream = FileOutputStream(temp, False)
-    writer = OutputStreamWriter(stream, "UTF-8")
+    channel = FileChannel.open(temp_path, StandardOpenOption.WRITE,
+                               LinkOption.NOFOLLOW_LINKS)
+    writer = OutputStreamWriter(Channels.newOutputStream(channel), "UTF-8")
     writer.write(json.dumps(payload, sort_keys=True, indent=2))
     writer.write("\n")
     writer.flush()
-    stream.getFD().sync()
+    channel.force(True)
     writer.close()
     writer = None
     # renameTo can replace a result created by another invocation after our

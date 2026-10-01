@@ -29,14 +29,17 @@ import { fileURLToPath } from 'node:url';
 
 const WEB_DIR = fileURLToPath(new URL('./', import.meta.url));
 const APP_INPUT = process.env.NITRO_APP;
-const JSON_OUT = process.argv[2];
-const LOG_OUT = process.argv[3];
-if (!APP_INPUT || !JSON_OUT || !LOG_OUT) {
+const JSON_ARG = process.argv[2];
+const LOG_ARG = process.argv[3];
+if (!APP_INPUT || !JSON_ARG || !LOG_ARG) {
   console.error('usage: NITRO_APP=/owned/app node cockpit_jitter_probe.mjs <new-json-output> <new-log-output>');
   process.exit(1);
 }
 const APP = externalPath(APP_INPUT, 'NITRO_APP', { existing: true }) + sep;
-for (const output of [JSON_OUT, LOG_OUT]) newOutputFile(output);
+/* Write only to the canonical paths that validation reserved, never the
+ * raw arguments, which a symlinked '..' could resolve elsewhere. */
+const JSON_OUT = newOutputFile(JSON_ARG);
+const LOG_OUT = newOutputFile(LOG_ARG);
 const BUILD_SHA = process.env.I76_BUILD_ID || 'unversioned-source';
 const CAMLERP = process.env.CAMLERP || 'extrap';
 if (!['interp', 'extrap'].includes(CAMLERP))
@@ -169,8 +172,14 @@ const unwrap = (values) => {
   }
   return out;
 };
+/* Only attitude angles are periodic. Positions and pixel coordinates use
+ * ordinary differences, or a jump of 2*pi units would vanish. */
+const ANGULAR = new Set(['yaw', 'pitch', 'roll']);
 const secondVector = (rows, keys) => {
-  const cols = keys.map((k) => unwrap(rows.map((r) => r[k])));
+  const cols = keys.map((k) => {
+    const values = rows.map((r) => r[k]);
+    return ANGULAR.has(k) ? unwrap(values) : values;
+  });
   const out = [];
   for (let i = 2; i < rows.length; i++)
     out.push(Math.hypot(...cols.map((c) => c[i] - 2 * c[i - 1] + c[i - 2])));

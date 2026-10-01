@@ -206,7 +206,7 @@ or packaged as read-only tools.
 | File | Purpose | Important limit |
 |---|---|---|
 | `decomp_at.py` | Decompile containing existing function | 120 s; 1 MiB text |
-| `decomp_many.py` | Batch decompile in one JVM | 64 addresses; 256 KiB each |
+| `decomp_many.py` | Batch decompile in one JVM; any failed address fails the batch (partial output kept) | 64 addresses; 256 KiB each |
 | `disasm_at.py` | Existing instructions around address | radius <= 200 |
 | `disasm_fn.py` | Existing instructions in function | <= 50,000 instructions |
 | `xref_addr.py` | References to any mapped address | <= 10,000 |

@@ -4,10 +4,11 @@ import puppeteer from 'puppeteer';
 import {readFile,realpath,stat,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {externalPath,loopbackPage,newOutputDir} from './tests/external_paths.mjs';
-const PAGE=process.argv[2],OUT=process.argv[3],APP_INPUT=process.env.NITRO_APP;
-if(!PAGE||!OUT||!APP_INPUT){console.error('usage: NITRO_APP=/owned/app node road_traversal_gate.mjs <page-url> <new-output-dir>');process.exit(1)}
+const PAGE=process.argv[2],OUT_ARG=process.argv[3],APP_INPUT=process.env.NITRO_APP;
+if(!PAGE||!OUT_ARG||!APP_INPUT){console.error('usage: NITRO_APP=/owned/app node road_traversal_gate.mjs <page-url> <new-output-dir>');process.exit(1)}
 loopbackPage(PAGE);
-newOutputDir(OUT);
+// Write only beneath the canonical directory validation reserved.
+const OUT=newOutputDir(OUT_ARG);
 const CASES=['miss8/P01.MSN','miss8/P02.MSN'];
 const ASSET_PREFIX='/__i76_assets/';
 const FLAGS=['--no-sandbox','--disable-dev-shm-usage','--enable-unsafe-webgpu','--enable-webgpu-developer-features','--use-angle=vulkan','--disable-background-timer-throttling','--disable-renderer-backgrounding','--disable-backgrounding-occluded-windows'];
@@ -42,4 +43,4 @@ try{
   await page.close();
  }
 }catch(e){failed=true;console.error(`FAIL road traversal launch: ${e.stack||e}`)}finally{if(browser)await browser.close().catch(()=>{})}
-if(skipped)process.exit(2);if(failed)process.exit(1);console.log(`RESULT: PASS (${CASES.length} physical-drive cases; anti-heal traversal + 20 consecutive far-field pairs, SW/GPU)`);
+if(failed)process.exit(1);if(skipped)process.exit(2);console.log(`RESULT: PASS (${CASES.length} physical-drive cases; anti-heal traversal + 20 consecutive far-field pairs, SW/GPU)`);

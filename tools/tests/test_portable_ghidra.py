@@ -312,6 +312,57 @@ class PortableLauncherTests(unittest.TestCase):
                 unrelated.terminate()
                 unrelated.wait()
 
+    def test_timeout_kills_descendants_that_outlive_the_launcher(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pid_file = root / "child.pid"
+            fake = root / "analyzeHeadless"
+            # The launcher exits on SIGTERM; its child ignores SIGTERM and
+            # must still be killed once the group's grace period ends.
+            fake.write_text(
+                "#!/usr/bin/env python3\n"
+                "import subprocess, sys, time\n"
+                "child = subprocess.Popen([sys.executable, '-c', "
+                "'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'],"
+                " stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+                f"open({str(pid_file)!r}, 'w').write(str(child.pid))\n"
+                "time.sleep(30)\n"
+            )
+            fake.chmod(0o755)
+            project = root / "project"
+            project.mkdir()
+            (project / "Own Project.gpr").write_text("")
+            with contextlib.redirect_stderr(io.StringIO()):
+                rc = headless.run([
+                    "query", "--analyze-headless", str(fake),
+                    "--project-dir", str(project), "--project-name", "Own Project",
+                    "--program", "sample.bin", "--timeout", "1",
+                    "decomp_at.py", "0x1",
+                ])
+            self.assertEqual(rc, 124)
+            child = int(pid_file.read_text())
+
+            def running(pid):
+                # A killed orphan may linger as a zombie where no init reaps
+                # it (e.g. a CI container); that is dead, not a survivor.
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    return False
+                try:
+                    stat = Path(f"/proc/{pid}/stat").read_text()
+                except OSError:
+                    return True
+                return stat.rsplit(")", 1)[1].split()[0] != "Z"
+
+            for _ in range(50):
+                if not running(child):
+                    break
+                time.sleep(0.1)
+            else:
+                os.kill(child, 9)
+                self.fail("descendant that ignored SIGTERM survived the timeout cleanup")
+
 
 class PersistentClientTests(unittest.TestCase):
     def common(self, root: Path, directory="project", project_name="Synthetic",
@@ -416,6 +467,31 @@ class PersistentClientTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE((paths["root"] / "binding.json").stat().st_mode),
                              0o600)
 
+    def test_binding_is_published_whole_and_concurrent_firsts_agree(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            project.mkdir()
+            state = root / "state"
+            results, errors = [], []
+
+            def first_request():
+                try:
+                    results.append(query.default_paths(state, project, "Synthetic", "sample.bin"))
+                except Exception as exc:  # pragma: no cover - reported below
+                    errors.append(exc)
+
+            threads = [threading.Thread(target=first_request) for _ in range(8)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            self.assertEqual(errors, [])
+            namespace = results[0]["root"]
+            self.assertEqual(sorted(p.name for p in namespace.iterdir()), ["binding.json"])
+            self.assertEqual(json.loads((namespace / "binding.json").read_text()),
+                             results[0]["binding"])
+
     def test_group_writable_state_base_is_rejected_without_chmod(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -443,6 +519,29 @@ class PersistentClientTests(unittest.TestCase):
             self.assertFalse(started)
             self.assertEqual(status, busy)
             popen.assert_not_called()
+
+    def test_cold_starting_service_waits_on_the_startup_lock(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            argv, paths = self.common(root)
+            argv.append("service.start")
+            args = query.build_parser().parse_args(argv)
+            busy = {"status": "busy", "service_pid": 42, "binding": paths["binding"]}
+            ready = {"status": "ready"}
+            # Tracked pid but no socket yet: route through start_service,
+            # which blocks on the lock held by the cold-starting client.
+            with mock.patch.object(query, "service_state", return_value=("busy", busy)), \
+                    mock.patch.object(query, "start_service",
+                                      return_value=(ready, False)) as start:
+                self.assertEqual(query._ensure_service(args, paths), (ready, False))
+            start.assert_called_once()
+            # Socket present: a busy serial daemon takes the request directly.
+            paths["socket"].parent.mkdir(parents=True, exist_ok=True)
+            paths["socket"].touch()
+            with mock.patch.object(query, "service_state", return_value=("busy", busy)), \
+                    mock.patch.object(query, "start_service") as start:
+                self.assertEqual(query._ensure_service(args, paths), (busy, False))
+            start.assert_not_called()
 
     def test_tracked_busy_process_binding_mismatch_fails_closed(self):
         with tempfile.TemporaryDirectory() as temporary:
