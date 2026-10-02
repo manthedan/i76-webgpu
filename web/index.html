@@ -5,7 +5,7 @@
 <title>i76-webgpu — developer preview</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E">
-<link rel="stylesheet" href="shell.css?v=20260813-buildid">
+<link rel="stylesheet" href="shell.css?v=20261001-play">
 <link rel="stylesheet" href="authentic-shell.css?v=20260815-h071">
 </head>
 <body>
@@ -256,19 +256,25 @@ supplied credits cutscene plays over this screen when it is staged.</pre>
     <div id="radioHud" aria-live="polite" hidden></div>
     <div id="pauseMenu" role="dialog" aria-modal="true"
          aria-labelledby="pauseTitle" hidden>
-      <!-- Buttons float over the engine-drawn escape paper (6PLYOPT1).
-           Titles come from the VQM art; these are the port's actions. -->
-      <div class="pauseActions">
-        <h2 class="shellTitle" id="pauseTitle">Play Options</h2>
-        <div class="row">
-          <button id="pauseDoneBtn">Done</button>
-          <button class="dangerAction" id="pauseExitBtn">Exit Trip</button>
-        </div>
-      </div>
+      <!-- The engine draws the stock escape paper (6MAINMN1, 6PLYOPT1, …):
+           a blank Spanner's Cafe order pad. The original wrote its items on
+           the pad at runtime; the script writes the port's items on the
+           same lines (see padMenu in the module script). -->
+      <h2 class="visuallyHidden" id="pauseTitle">Options Menu</h2>
+      <div id="padRows" role="menu" aria-labelledby="pauseTitle"></div>
     </div>
+    <div id="helpOverlay" role="dialog" aria-labelledby="helpTitle" hidden>
+      <h2 id="helpTitle">Controls</h2>
+      <dl id="helpList"></dl>
+      <p class="helpFoot">H — close · Esc — options menu</p>
+    </div>
+    <p id="playToast" aria-live="polite" hidden></p>
   </div>
+  <div id="driveBar">
   <div class="row driveActions">
     <span class="hint" id="speedo"></span>
+    <button id="helpBtn" title="show controls (H)">controls</button>
+    <button id="menuBtn" title="options menu (Esc)">menu</button>
     <button id="recoverBtn" disabled title="return to recent safe ground (R)">recover</button>
     <button id="camBtn" title="cycle camera views (F1–F11 presets)">view: cockpit</button>
   </div>
@@ -286,6 +292,7 @@ supplied credits cutscene plays over this screen when it is staged.</pre>
     <button id="mirrorBtn" title="toggle rearview mirror (backquote `)">mirror</button>
   </div>
   <p class="hint" id="driveHint" aria-live="polite"></p>
+  </div>
 </section>
 
 <!-- Development controls: hidden unless the page is opened with ?dev=1.
@@ -347,7 +354,7 @@ supplied credits cutscene plays over this screen when it is staged.</pre>
      stale locally-built wasm must still self-identify (H-UAT-022). -->
 <p class="buildId" id="buildId" hidden></p>
 
-<script src="audio.js?v=20260813-5"></script>
+<script src="audio.js?v=20261001-levels"></script>
 <script src="trial.js?v=20260811-2"></script>
 <script type="module">
 /* The engine module is versioned by the build stamp (dist/stamp.json is
@@ -360,7 +367,7 @@ const BUILD_V = await fetch('dist/stamp.json', { cache: 'no-store' })
   .then((j) => (j && j.stamp) || 'dev')
   .catch(() => 'dev');
 const I76Web = (await import(`./dist/i76web.mjs?v=${BUILD_V}`)).default;
-import * as Assets from './assets.js?v=20260813-portrait-keys1';
+import * as Assets from './assets.js?v=20261001-leefont';
 import * as Save from './save.js?v=20260918-gpu-default';
 import * as ShellArt from './shell-art.js?v=20260813-portrait-keys1';
 
@@ -690,6 +697,8 @@ function gpuTeardown(msg, err) {
   gpuFailed = true;
   window.__i76.blitErr = msg + (err ? ': ' + String(err && err.stack || err) : '');
   $('missionInfo').textContent = `${msg} — software renderer in use`;
+  /* Players never see the developer panel; say it on the game view too. */
+  if (!DEV) showPlayToast(`${msg} — using the software renderer`, 9000);
 }
 
 async function gpuEnsure() {
@@ -939,7 +948,7 @@ function updateDriveGuidance(p, controlsReady) {
   }
   hud.textContent = text;
   hud.classList.toggle('reached', reached);
-  hud.hidden = !text;
+  hud.hidden = !text || !playPrefs.objectives;
 }
 /* On-screen radio text (H-UAT-015): the drive was playing radio VOICE
  * with no visual trace. Each new line shows speaker + clip while it
@@ -949,7 +958,7 @@ function updateDriveGuidance(p, controlsReady) {
  * invention. */
 function showRadioLine(msg) {
   const m = msg.match(/^(?:(.+?):\s+)?([\w\-]+)\.wav$/i);
-  if (!m) return;
+  if (!m || !playPrefs.radio) return;
   const el = $('radioHud');
   el.textContent =
     `RADIO${m[1] ? ' — ' + m[1].toUpperCase() : ''} · ${m[2].toLowerCase()}`;
@@ -2216,6 +2225,7 @@ function onShellState(st) {
       'look up/down · Ins target · ` mirror · keypad PgUp/PgDn camera range · P/ESC options' +
       (car ? ` · vehicle ${car}` : '');
     if (DEV) $('hudInfo').textContent = 'ESC opens Play Options';
+    showPlayToast('H — controls · Esc — options menu');
     if (trialArmed) trialStart();
     I76Trial.event('shell', { state: st });
   } else if (st === SHELL.DEBRIEF) {
@@ -2480,17 +2490,177 @@ function recoverDrive() {
   $('driveHint').textContent = 'recovered to recent safe ground · arrows/WASD drive · X reverse · Alt handbrake · ,/. shift · space fires · 1–8 select · Enter cycle · L link · G horn · M map · N notepad · F1–F11 views · R recovers · keypad 4/6 glance · keypad 2/8 look up/down · Ins target · ` mirror · keypad PgUp/PgDn camera range · P/ESC options';
 }
 $('recoverBtn').onclick = recoverDrive;
+/* ---- Spanner's Cafe options menu ------------------------------------
+ * The stock escape papers (6MAINMN1, 6PLYOPT1, 6AUDCON1, …) are blank
+ * order pads: the original wrote its items onto them at runtime. The engine
+ * draws the paper; these rows are written on its lines. Geometry is the
+ * papers' own, measured on the 640x480 frame: ruled rows on a 23.1 px pitch
+ * from y 111, item column x 195–396, value ("price") column x 396–467, and
+ * 6AUDCON1's ten-square bars in rows 3/6/9 from x 198.8 on a 17.1 px pitch.
+ * The original's item text is not decoded, so the items are the port's real
+ * settings (PORT DECISION); Music Level is the one decoded native control. */
+const PAPER_ESC = { main: 1, play: 2, abort: 3, audio: 4, graphics: 5 };
+const PLAY_PREFS_KEY = 'i76.playPrefs';
+const playPrefs = (() => {
+  const prefs = { objectives: true, radio: true,
+                  levels: { master: 1, music: 1, effects: 1 } };
+  try {
+    const saved = JSON.parse(localStorage.getItem(PLAY_PREFS_KEY) || '{}');
+    if (typeof saved.objectives === 'boolean') prefs.objectives = saved.objectives;
+    if (typeof saved.radio === 'boolean') prefs.radio = saved.radio;
+    for (const k of ['master', 'music', 'effects']) {
+      const v = Number(saved.levels?.[k]);
+      if (Number.isFinite(v)) prefs.levels[k] = Math.min(1, Math.max(0, v));
+    }
+  } catch { /* unreadable storage keeps the defaults */ }
+  return prefs;
+})();
+function savePlayPrefs() {
+  try { localStorage.setItem(PLAY_PREFS_KEY, JSON.stringify(playPrefs)); } catch { /* ignore */ }
+}
+I76Audio.setLevels(playPrefs.levels);
+
+const onOff = (v) => v ? 'On' : 'Off';
+const PAD_PAGES = {
+  main: [
+    { row: 1, label: 'Resume driving', id: 'pauseDoneBtn', act: () => setPaused(false) },
+    { row: 3, label: 'Play Options', act: () => showPad('play') },
+    { row: 4, label: 'Audio Control', act: () => showPad('audio') },
+    { row: 5, label: 'Graphic Detail', act: () => showPad('graphics') },
+    { row: 7, label: 'Controls', act: () => { setPaused(false); toggleHelp(true); } },
+    { row: 9, label: 'Abort Mission', id: 'pauseAbortBtn', act: () => showPad('abort') },
+  ],
+  play: [
+    { row: 1, label: 'Objective list', value: () => onOff(playPrefs.objectives),
+      act: () => { playPrefs.objectives = !playPrefs.objectives; savePlayPrefs(); } },
+    { row: 2, label: 'Radio captions', value: () => onOff(playPrefs.radio),
+      act: () => { playPrefs.radio = !playPrefs.radio; savePlayPrefs();
+                   if (!playPrefs.radio) $('radioHud').hidden = true; } },
+    { row: 3, label: 'Camera view', value: () => VIEW_NAMES[driveViewPreset] || '',
+      act: () => cycleDriveView(), adjust: (d) => {
+        const i = VIEW_CYCLE.indexOf(driveViewPreset);
+        selectViewPreset(VIEW_CYCLE[(i + d + VIEW_CYCLE.length) % VIEW_CYCLE.length]);
+      } },
+    { row: 4, label: 'Rear-view mirror', value: () => 'toggle',
+      act: () => $('mirrorBtn').click() },
+    { row: 10, label: 'Back', act: () => showPad('main') },
+  ],
+  audio: [
+    { row: 2, label: 'Music', bar: 'music' },
+    { row: 5, label: 'Sound effects', bar: 'effects' },
+    { row: 8, label: 'Master volume', bar: 'master' },
+    { row: 10, label: 'Back', act: () => showPad('main') },
+  ],
+  graphics: [
+    { row: 1, label: 'Renderer', value: () => renderer === 'gpu' ? 'WebGPU' : 'Software',
+      act: () => $('gpuBtn').click() },
+    { row: 10, label: 'Back', act: () => showPad('main') },
+  ],
+  abort: [
+    { row: 2, label: 'Leave this trip?', note: true },
+    { row: 4, label: 'Yes — abort mission', id: 'pauseExitBtn', act: abortTrip },
+    { row: 5, label: 'No — keep driving', act: () => showPad('main') },
+  ],
+};
+let padPage = 'main', padIndex = 0;
+const padRowTop = (row) => `${(111 + (row - 1) * 23.1) / 4.8}%`;
+const padItems = () => PAD_PAGES[padPage].filter((it) => !it.note);
+function adjustBar(key, d) {
+  const steps = Math.round(playPrefs.levels[key] * 10);
+  playPrefs.levels[key] = Math.min(10, Math.max(0, steps + d)) / 10;
+  I76Audio.setLevels(playPrefs.levels);
+  savePlayPrefs();
+}
+function renderPad() {
+  const host = $('padRows');
+  host.replaceChildren();
+  const items = padItems();
+  for (const it of PAD_PAGES[padPage]) {
+    const el = document.createElement(it.note ? 'p' : 'button');
+    el.className = 'padRow' + (it.note ? ' padNote' : '');
+    if (it.id) el.id = it.id;
+    el.style.top = padRowTop(it.row);
+    const label = document.createElement('span');
+    label.className = 'padItem';
+    label.textContent = it.label;
+    el.append(label);
+    if (it.value) {
+      const value = document.createElement('span');
+      value.className = 'padValue';
+      value.textContent = it.value();
+      el.append(value);
+    }
+    if (!it.note) {
+      const i = items.indexOf(it);
+      el.setAttribute('role', 'menuitem');
+      el.classList.toggle('selected', i === padIndex);
+      /* Selection follows pointer and focus in place: rebuilding the rows
+       * here would replace a button between press and release. */
+      el.addEventListener('pointerenter', () => selectPad(i, false));
+      el.addEventListener('focus', () => selectPad(i, false));
+      el.addEventListener('click', () => activatePad(it, 1));
+    }
+    host.append(el);
+    if (it.bar) {
+      /* The bar itself sits on the next row's printed squares. */
+      const bar = document.createElement('div');
+      bar.className = 'padBar';
+      bar.style.top = padRowTop(it.row + 1);
+      const filled = Math.round(playPrefs.levels[it.bar] * 10);
+      for (let b = 0; b < 10; b++) {
+        const mark = document.createElement('span');
+        mark.className = 'padMark' + (b < filled ? ' on' : '');
+        mark.style.left = `${(198.8 + b * 17.1) / 6.4}%`;
+        mark.addEventListener('click', (e) => {
+          e.stopPropagation();
+          playPrefs.levels[it.bar] = (b + 1) / 10 === playPrefs.levels[it.bar] ? b / 10 : (b + 1) / 10;
+          I76Audio.setLevels(playPrefs.levels);
+          savePlayPrefs();
+          renderPad();
+        });
+        bar.append(mark);
+      }
+      bar.setAttribute('aria-label', `${it.label} ${filled * 10}%`);
+      host.append(bar);
+    }
+  }
+}
+function selectPad(i, focus) {
+  padIndex = i;
+  const rows = [...$('padRows').querySelectorAll('.padRow[role="menuitem"]')];
+  rows.forEach((row, j) => row.classList.toggle('selected', j === i));
+  if (focus && rows[i] && document.activeElement !== rows[i])
+    rows[i].focus({ preventScroll: true });
+}
+function activatePad(it, dir) {
+  if (it.bar) adjustBar(it.bar, dir);
+  else if (it.act) it.act();
+  if (paused) { renderPad(); selectPad(padIndex, true); }
+}
+function showPad(page) {
+  padPage = page;
+  padIndex = 0;
+  if (typeof M._web_paper_set_escape === 'function')
+    M._web_paper_set_escape(PAPER_ESC[page]);
+  try { M._web_drive_render(); blit(); } catch (_) { /* next frame redraws */ }
+  renderPad();
+  selectPad(0, true);
+}
+function abortTrip() {
+  setPaused(false);
+  M._web_key_event(PK.Escape, 1);
+  M._web_key_event(PK.Escape, 0);
+}
 function setPaused(next) {
   const was = paused;
   paused = !!next && shellState === SHELL.DRIVE && !movieRunning;
   $('pauseMenu').hidden = !paused;
+  document.body.classList.toggle('paused', paused);
   simAcc = 0;
   if (paused) {
     releaseDriveKeys();
-    /* PAPER_ESC_PLYOPT = 2 — original Play Options diner pad. */
-    if (typeof M._web_paper_set_escape === 'function')
-      M._web_paper_set_escape(2);
-    try { M._web_drive_render(); blit(); } catch (_) { /* first frame ok */ }
+    toggleHelp(false);
+    showPad('main');
   } else if (typeof M._web_paper_set_escape === 'function') {
     M._web_paper_set_escape(0);
   }
@@ -2502,19 +2672,100 @@ function setPaused(next) {
     I76Trial.event('pause', { on: paused });
   }
 }
-$('pauseDoneBtn').onclick = () => setPaused(false);
-$('pauseExitBtn').onclick = () => {
-  setPaused(false);
-  M._web_key_event(PK.Escape, 1);
-  M._web_key_event(PK.Escape, 0);
-};
+$('menuBtn').onclick = () => setPaused(true);
 window.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape' || shellState !== SHELL.DRIVE || movieRunning)
+  if (shellState !== SHELL.DRIVE || movieRunning) return;
+  if (e.key === 'Escape' && !paused && !$('helpOverlay').hidden) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    toggleHelp(false);
     return;
-  e.preventDefault();
-  e.stopImmediatePropagation();
-  setPaused(!paused);
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (paused && padPage !== 'main') showPad('main');
+    else setPaused(!paused);
+    return;
+  }
+  if (!paused) return;
+  /* While the pad is up, the arrows/Enter drive the menu, not the car. */
+  const items = padItems();
+  const it = items[padIndex];
+  let handled = true;
+  if (e.key === 'ArrowDown' || e.key === 's') padIndex = (padIndex + 1) % items.length;
+  else if (e.key === 'ArrowUp' || e.key === 'w') padIndex = (padIndex - 1 + items.length) % items.length;
+  else if ((e.key === 'ArrowLeft' || e.key === 'a') && it?.bar) adjustBar(it.bar, -1);
+  else if ((e.key === 'ArrowRight' || e.key === 'd') && it?.bar) adjustBar(it.bar, 1);
+  else if ((e.key === 'ArrowLeft' || e.key === 'a') && it?.adjust) it.adjust(-1);
+  else if ((e.key === 'ArrowRight' || e.key === 'd') && it?.adjust) it.adjust(1);
+  else if ((e.key === 'Enter' || e.key === ' ') && it) {
+    /* Consume the key: "Resume driving" unpauses inside this handler, and
+     * the same keypress must not then fire or cycle weapons in the game. */
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (!e.repeat) activatePad(it, 1);
+    return;
+  } else handled = false;
+  if (handled) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (paused) { renderPad(); selectPad(padIndex, true); }
+  }
 }, true);
+
+/* ---- Controls overlay (H) --------------------------------------------- */
+const HELP_ROWS = [
+  ['↑ ↓ ← → / W A S D', 'drive'], ['X', 'reverse'], ['Alt', 'handbrake'],
+  [', .', 'shift down / up'], ['Space', 'fire'], ['1–8, Enter', 'select / cycle weapon'],
+  ['L', 'link weapons'], ['G', 'horn'], ['M', 'map'], ['N', 'notepad'],
+  ['F1–F11', 'camera views'], ['R', 'recover to safe ground'],
+  ['Keypad 4 6 · 2 8', 'glance left/right · look up/down'], ['Insert', 'look at target'],
+  ['`', 'rear-view mirror'], ['PgUp / PgDn', 'camera range'],
+  ['Esc / P', 'options menu'], ['H', 'this list'],
+];
+$('helpList').replaceChildren(...HELP_ROWS.flatMap(([k, v]) => {
+  const dt = document.createElement('dt'); dt.textContent = k;
+  const dd = document.createElement('dd'); dd.textContent = v;
+  return [dt, dd];
+}));
+function toggleHelp(show = $('helpOverlay').hidden) {
+  $('helpOverlay').hidden = !show;
+}
+$('helpBtn').onclick = () => toggleHelp();
+let toastTimer = null;
+function showPlayToast(text, ms = 6000) {
+  const el = $('playToast');
+  el.textContent = text;
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, ms);
+}
+
+/* ---- Play presentation -------------------------------------------------
+ * Ordinary visits present the drive and cutscenes as a full-window game
+ * (CSS keyed on body.playing); developer mode keeps the diagnostic page.
+ * The drive controls stay real buttons in a bar that fades while driving
+ * and returns on pointer movement. */
+document.body.classList.toggle('devMode', DEV);
+/* The DOM objective/radio panels replace the engine's in-frame port text. */
+if (!DEV) M._web_hud_set_text_overlay?.(0);
+function syncPlaying() {
+  document.body.classList.toggle('playing',
+    !$('gamePanel').hidden || !$('moviePanel').hidden);
+}
+const playObserver = new MutationObserver(syncPlaying);
+for (const id of ['gamePanel', 'moviePanel'])
+  playObserver.observe($(id), { attributes: true, attributeFilter: ['hidden'] });
+syncPlaying();
+let barTimer = null;
+function wakeDriveBar() {
+  document.body.classList.add('barAwake');
+  clearTimeout(barTimer);
+  barTimer = setTimeout(() => document.body.classList.remove('barAwake'), 2500);
+}
+window.addEventListener('pointermove', wakeDriveBar, { passive: true });
+window.addEventListener('pointerdown', wakeDriveBar, { passive: true });
 const pushKey = (e, down) => {
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   /* Purchaser gamekey.map F-key rows: F1..F11 select PRESET_VIEW_1/2/3/
@@ -2537,6 +2788,11 @@ const pushKey = (e, down) => {
    * frozen the simulation; consume it before the paused early return. */
   if (k === 'F12' && I76Trial.recording()) {
     if (down && !e.repeat) trialMark();
+    e.preventDefault();
+    return;
+  }
+  if (k === 'h' && mode === 'drive' && !movieRunning) {
+    if (down && !e.repeat && !paused) toggleHelp();
     e.preventDefault();
     return;
   }
@@ -2730,8 +2986,9 @@ async function installLeeFont() {
     (p) => p.toLowerCase() === 'lee_____.ttf');
   if (!name) return;
   try {
-    const bytes = M.FS.readFile('/data/' + name);
-    const face = new FontFace('Lee Regular', bytes.buffer);
+    const bytes = Assets.repairLegacyTrueType(M.FS.readFile('/data/' + name));
+    const face = new FontFace('Lee Regular',
+      bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
     await face.load();
     document.fonts.add(face);
     leeFontReady = true;

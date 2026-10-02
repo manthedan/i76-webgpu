@@ -1056,37 +1056,14 @@ canvas {
   position: absolute;
   z-index: 5;
   inset: 0;
-  display: grid;
-  place-items: end center;
-  padding: var(--space-6);
-  /* Canvas already shows the original escape paper (6PLYOPT1); keep the
-     DOM chrome as action buttons only, not a second faux paper card. */
+  /* Percentages and cqh units below are fractions of the 640x480 frame, so
+     rows land on the engine-drawn pad lines at any display size. */
+  container-type: size;
   background: transparent;
-  pointer-events: none;
 }
 
-#pauseMenu .pauseActions {
-  width: min(100%, 22rem);
-  padding: var(--space-4);
-  border: var(--line) solid var(--color-paper-rule);
-  background: rgb(216 199 157 / 92%);
-  box-shadow: var(--shadow-paper);
-  color: var(--color-ink);
-  text-align: left;
-  pointer-events: auto;
-}
 
-#pauseMenu .shellTitle {
-  margin: 0 0 var(--space-3);
-  color: var(--color-ink);
-  font-family: var(--font-hand);
-  font-size: var(--text-lg);
-  letter-spacing: var(--tracking-label);
-}
 
-#pauseMenu .row {
-  flex-wrap: wrap;
-}
 
 #speedo {
   flex: 1 1 12rem;
@@ -1111,17 +1088,7 @@ canvas {
   color: var(--color-smoke-faint);
 }
 
-#pauseMenu button {
-  border-color: var(--color-rust);
-  background: var(--color-rust);
-  color: var(--color-paper-raised);
-}
 
-#pauseMenu #pauseExitBtn {
-  border-color: var(--color-danger);
-  background: transparent;
-  color: var(--color-danger);
-}
 
 #lookPad button {
   flex: 1 1 5.5rem;
@@ -1256,14 +1223,6 @@ canvas {
     left: var(--space-2);
   }
 
-
-  #pauseMenu {
-    padding: var(--space-3);
-  }
-
-  #pauseMenu .pauseActions {
-    padding: var(--space-4);
-  }
 }
 
 @media (max-width: 32rem) {
@@ -1276,8 +1235,7 @@ canvas {
     align-items: stretch;
   }
 
-  .formActions > button,
-  #pauseMenu .row > button {
+  .formActions > button {
     flex: 1 1 100%;
   }
 
@@ -1306,4 +1264,309 @@ canvas {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ---- Spanner's Cafe options pad -------------------------------------- */
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+#padRows {
+  position: absolute;
+  inset: 0;
+}
+
+#padRows .padRow {
+  position: absolute;
+  left: 30.5%;
+  width: 42.4%;
+  height: 4.81%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+  padding: 0 0.6cqw;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-ink);
+  font-family: var(--font-hand);
+  font-size: 3.3cqh;
+  font-weight: 400;
+  letter-spacing: normal;
+  line-height: 1;
+  text-align: left;
+  text-transform: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#padRows .padRow .padValue {
+  flex: 0 0 26%;
+  text-align: center;
+  color: var(--color-rust);
+}
+
+#padRows .padRow:hover,
+#padRows .padRow:focus-visible,
+#padRows .padRow.selected {
+  outline: none;
+  background: rgb(119 47 32 / 12%);
+  color: var(--color-rust);
+}
+
+#padRows .padRow.selected .padItem::before {
+  content: "\2192\00a0";
+}
+
+#padRows .padNote {
+  cursor: default;
+  font-style: italic;
+}
+
+.padBar {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 4.81%;
+  pointer-events: none;
+}
+
+.padMark {
+  position: absolute;
+  top: 24%;
+  width: 1.72%;
+  height: 52%;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.padMark.on {
+  background: rgb(33 28 23 / 78%);
+  box-shadow: inset 0 0 0 0.15cqh rgb(33 28 23 / 40%);
+}
+
+/* ---- Controls overlay and hint -------------------------------------- */
+#helpOverlay {
+  position: absolute;
+  z-index: 6;
+  top: 50%;
+  left: 50%;
+  width: min(92%, 34rem);
+  max-height: 90%;
+  overflow: auto;
+  padding: var(--space-4) var(--space-5, 1.25rem);
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--color-paper-rule);
+  background: var(--color-paper-raised);
+  box-shadow: var(--shadow-paper);
+  color: var(--color-ink);
+}
+
+#helpOverlay h2 {
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-hand);
+  font-size: var(--text-lg);
+}
+
+#helpList {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+#helpList dt {
+  font-family: var(--font-code);
+  font-weight: 700;
+}
+
+#helpList dd {
+  margin: 0;
+}
+
+.helpFoot {
+  margin: var(--space-3) 0 0;
+  color: var(--color-ink-muted);
+  font-size: var(--text-xs);
+}
+
+#playToast {
+  position: absolute;
+  z-index: 6;
+  bottom: 5%;
+  left: 50%;
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  transform: translateX(-50%);
+  background: var(--color-hud);
+  color: var(--color-smoke);
+  font-family: var(--font-code);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ---- Full-window play (ordinary visits only) --------------------------
+   Developer mode (?dev=1) keeps the diagnostic page layout above. */
+body.playing:not(.devMode) {
+  overflow: hidden;
+  background: #000;
+}
+
+body.playing:not(.devMode) .siteHeader,
+body.playing:not(.devMode) .siteFooter,
+body.playing:not(.devMode) #assetPanel {
+  display: none;
+}
+
+body.playing:not(.devMode) #gamePanel,
+body.playing:not(.devMode) #moviePanel {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: #000;
+  box-shadow: none;
+}
+
+body.playing:not(.devMode) .gameViewport,
+body.playing:not(.devMode) #movieScreen {
+  width: min(100vw, calc(100dvh * 4 / 3));
+  max-width: none;
+  height: auto;
+  aspect-ratio: 4 / 3;
+}
+
+body.playing:not(.devMode) #screen,
+body.playing:not(.devMode) #movieScreen {
+  width: 100%;
+  border: 0;
+}
+
+body.playing:not(.devMode) #movieScreen {
+  width: min(100vw, calc(100dvh * 4 / 3));
+}
+
+body.playing:not(.devMode) #movieTitle {
+  display: none;
+}
+
+body.playing:not(.devMode) #moviePanel .mediaActions {
+  position: fixed;
+  right: var(--space-4);
+  bottom: var(--space-8);
+  margin: 0;
+  opacity: 0.55;
+}
+
+body.playing:not(.devMode) #moviePanel .mediaActions:hover {
+  opacity: 1;
+}
+
+/* The drive controls: a bar over the bottom of the window that fades out
+   while driving and returns when the pointer moves. */
+body.playing:not(.devMode) #driveBar {
+  position: fixed;
+  z-index: 60;
+  bottom: var(--space-3);
+  left: 50%;
+  width: min(94vw, 46rem);
+  padding: var(--space-2) var(--space-3);
+  transform: translateX(-50%);
+  border: 1px solid var(--color-night-soft);
+  background: rgb(11 10 8 / 84%);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+body.playing.barAwake:not(.devMode) #driveBar,
+body.playing:not(.devMode) #driveBar:hover,
+body.playing:not(.devMode) #driveBar:focus-within {
+  opacity: 1;
+}
+
+body.playing:not(.devMode) #driveBar .driveActions,
+body.playing:not(.devMode) #lookPad {
+  margin-top: 0;
+  justify-content: center;
+}
+
+body.playing:not(.devMode) #lookPad {
+  margin-top: var(--space-2);
+}
+
+body.playing:not(.devMode) #speedo,
+body.playing:not(.devMode) #driveHint {
+  display: none;
+}
+
+body:not(.playing) #helpBtn,
+body:not(.playing) #menuBtn,
+body.devMode #helpBtn,
+body.devMode #menuBtn {
+  display: none;
+}
+
+/* Objectives and radio captions: in the side margins a 4:3 game leaves on
+   wide windows, so they never cover the cockpit art; compact otherwise. */
+body.playing:not(.devMode) #objectiveHud,
+body.playing:not(.devMode) #radioHud {
+  max-width: 34%;
+  font-size: clamp(0.62rem, 1.6dvh, 0.85rem);
+}
+
+body.playing:not(.devMode) #objectiveHud {
+  top: 29%;
+  bottom: auto;
+  left: 1.5%;
+  right: auto;
+  max-height: 34%;
+  overflow: hidden;
+}
+
+body.playing:not(.devMode) #radioHud {
+  top: 29%;
+  left: auto;
+  right: 1.5%;
+}
+
+@media (min-aspect-ratio: 16 / 9) {
+  body.playing:not(.devMode) #objectiveHud,
+  body.playing:not(.devMode) #radioHud {
+    position: fixed;
+    top: var(--space-4);
+    max-width: none;
+    max-height: none;
+    width: calc((100vw - 100dvh * 4 / 3) / 2 - 2rem);
+    font-size: clamp(0.7rem, 1.7dvh, 0.95rem);
+  }
+
+  body.playing:not(.devMode) #objectiveHud {
+    left: var(--space-4);
+  }
+
+  body.playing:not(.devMode) #radioHud {
+    right: var(--space-4);
+  }
+}
+
+/* The options pad owns the frame while open. */
+body.paused #objectiveHud,
+body.paused #radioHud,
+body.paused #playToast,
+body.paused #helpOverlay {
+  display: none;
 }

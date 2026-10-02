@@ -6171,6 +6171,14 @@ const char *web_paper_stats(void)
 EMSCRIPTEN_KEEPALIVE
 int web_paper_active(void) { return (int)paper_active(); }
 
+/* In-frame port text overlay (hud_set_text_overlay). The consumer page
+ * turns it off and shows objectives/weapon state in the DOM instead. */
+EMSCRIPTEN_KEEPALIVE
+void web_hud_set_text_overlay(int on)
+{
+    hud_set_text_overlay(on);
+}
+
 /* Escape paper panel (PaperEscape enum). 0 clears. */
 EMSCRIPTEN_KEEPALIVE
 void web_paper_set_escape(int which)

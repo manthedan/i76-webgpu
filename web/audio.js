@@ -39,6 +39,11 @@
 var mod = null;              /* the emscripten module (I76Web instance) */
 var ctx = null;              /* AudioContext, created on attach/unlock  */
 var master = null;           /* master GainNode -> destination          */
+var sfxBus = null;           /* effects GainNode -> master              */
+/* Player volume levels (0..1) from the Audio Control pad. Port setting:
+ * the stock pad shows three ten-step bars; their native routing is not
+ * decoded, so they scale music, effects and the master bus. */
+var levels = { master: 1, music: 1, effects: 1 };
 var timer = null;            /* sync interval handle                    */
 
 var buffers = {};            /* lc name -> AudioBuffer | Promise        */
@@ -61,7 +66,10 @@ function ensureCtx() {
     if (!Ctor) return null;
     ctx = new Ctor();
     master = ctx.createGain();
-    master.gain.value = 1.0;
+    master.gain.value = levels.master;
+    sfxBus = ctx.createGain();
+    sfxBus.gain.value = levels.effects;
+    sfxBus.connect(master);
     /* PORT DECISION (H-UAT-034): a soft limiter between master and the
      * destination. Linked fire sums one full-scale muzzle sample per
      * gun in phase (+10-12 dB for 3-4 guns) and the browser hard-clips
@@ -162,7 +170,7 @@ function startShotSource(id, entry) {
     }
     var src = ctx.createBufferSource();
     src.buffer = entry.buf;
-    src.connect(master);
+    src.connect(sfxBus);
     src.onended = function () {
         if (shots[id] === entry) delete shots[id];
     };
@@ -258,7 +266,7 @@ function syncEngine(eng) {
             if (gen !== engGen || engine) return;   /* restarted meanwhile */
             if (!buf) return;
             var g = ctx.createGain();
-            g.connect(master);
+            g.connect(sfxBus);
             engine = { src: null, gain: g, wav: wav, buf: buf,
                        offset: 0, startedAt: 0, rate: pitch };
             g.gain.value = gain;
@@ -439,7 +447,7 @@ function musicStartSource(entry) {
     }
     if (!musicGainNode) {
         musicGainNode = ctx.createGain();
-        musicGainNode.gain.value = MUSIC_GAIN;
+        musicGainNode.gain.value = MUSIC_GAIN * levels.music;
         musicGainNode.connect(master);
     }
     var src = ctx.createBufferSource();
@@ -623,6 +631,19 @@ function syncMusic() {
 }
 
 /* Page supplies the byte source (MEMFS read-back; never the network). */
+/* Apply player volume levels; unknown keys and out-of-range values are
+ * ignored or clamped so a stale saved preference cannot mute the game. */
+function setLevels(next) {
+    ['master', 'music', 'effects'].forEach(function (k) {
+        var v = next && Number(next[k]);
+        if (next && k in next && isFinite(v))
+            levels[k] = Math.min(1, Math.max(0, v));
+    });
+    if (master) master.gain.value = levels.master;
+    if (sfxBus) sfxBus.gain.value = levels.effects;
+    if (musicGainNode) musicGainNode.gain.value = MUSIC_GAIN * levels.music;
+}
+
 function setMusicSource(reader) {
     musicRead = reader;
     syncMusic();
@@ -903,6 +924,8 @@ var api = {
     setMusicMode: setMusicMode,
     nextTrack: nextTrack,
     setPaused: setPaused,
+    setLevels: setLevels,
+    getLevels: function () { return { master: levels.master, music: levels.music, effects: levels.effects }; },
     onMusicStatus: onMusicStatus,
     playPcm: playPcm,
     stopMovieAudio: stopMovieAudio,

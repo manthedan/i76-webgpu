@@ -283,6 +283,11 @@ static struct {
     uint32_t  weapon_ammo_rows;        /* last render: actual digit draws      */
 } s;
 
+/* Port text overlay (status/guidance line and weapon row) switch. The shell
+ * page shows the same information outside the frame, so ordinary play turns
+ * the in-frame text off; developer/verification pages keep the default. */
+static int s_text_overlay = 1;
+
 /* -----------------------------------------------------------------------
  * .act palette
  * ----------------------------------------------------------------------- */
@@ -1902,7 +1907,7 @@ void hud_render_frame(uint8_t *fb, int w, int h,
 
     /* Text line: hud_set_text() override wins, else the drive status
      * line composed from the frame params. Font-gated either way. */
-    if (s.font && !(flags & HUD_FLAG_COCKPIT_LAYOUT)) {
+    if (s_text_overlay && s.font && !(flags & HUD_FLAG_COCKPIT_LAYOUT)) {
         char line[HUD_TEXT_CAP];
         const char *text = s.text;
         if (!text[0]) {
@@ -1952,7 +1957,7 @@ void hud_render_frame(uint8_t *fb, int w, int h,
      * objective controllers own up to two rows at the top left. Put this
      * compact line on row three, right-aligned, so selection/ammo/damage
      * remain visible in both cockpit and chase views. */
-    if (s.font && s.weapon_count > 0 &&
+    if (s_text_overlay && s.font && s.weapon_count > 0 &&
         !(flags & HUD_FLAG_COCKPIT_LAYOUT)) {
         char weapon[96], ammo[24];
         if (s.weapon_ammo < 0)
@@ -2159,6 +2164,11 @@ void hud_weapon_row_render_masks(uint32_t *authored, uint32_t *fallback,
     if (authored) *authored = s.weapon_authored_rows;
     if (fallback) *fallback = s.weapon_fallback_rows;
     if (ammo) *ammo = s.weapon_ammo_rows;
+}
+
+void hud_set_text_overlay(int on)
+{
+    s_text_overlay = on != 0;
 }
 
 void hud_set_text(const char *text)

@@ -475,3 +475,189 @@ export function canPickFolder() {
   return typeof window !== 'undefined' &&
          typeof window.showDirectoryPicker === 'function';
 }
+
+/*
+ * Retail lee_____.ttf (the shell's handwriting face) fails Chrome's font
+ * sanitizer ("Invalid font data"), so the page silently fell back to a generic
+ * face. Two defects must both be repaired: a version-0 OS/2 table (upgraded to
+ * version 1: version field + the two code-page words, Latin-1) and a format-4
+ * cmap whose segments overlap (0xB6-0xB7 then 0xB7; re-encoded as ordered,
+ * non-overlapping delta segments, first segment winning as Windows reads it).
+ * The sfnt search fields are also wrong and are derived afresh. Fonts without
+ * these defects are returned unchanged.
+ */
+function cmapFormat4Map(u8) {
+  /* Decode a format-4 subtable to code -> glyph; null if malformed. */
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  if (u8.byteLength < 14 || dv.getUint16(0) !== 4) return null;
+  const segX2 = dv.getUint16(6), seg = segX2 / 2;
+  const ends = 14, starts = 16 + segX2, deltas = starts + segX2, ranges = deltas + segX2;
+  if (ranges + segX2 > u8.byteLength) return null;
+  const map = new Map();
+  let overlap = false, prevEnd = -1;
+  for (let i = 0; i < seg; i++) {
+    const end = dv.getUint16(ends + 2 * i), start = dv.getUint16(starts + 2 * i);
+    const delta = dv.getUint16(deltas + 2 * i), ro = dv.getUint16(ranges + 2 * i);
+    if (start <= prevEnd) overlap = true;
+    prevEnd = Math.max(prevEnd, end);
+    for (let c = start; c <= end && c !== 0xffff; c++) {
+      let g;
+      if (ro === 0) g = (c + delta) & 0xffff;
+      else {
+        const at = ranges + 2 * i + ro + 2 * (c - start);
+        if (at + 2 > u8.byteLength) return null;
+        g = dv.getUint16(at);
+        if (g) g = (g + delta) & 0xffff;
+      }
+      if (!map.has(c)) map.set(c, g);
+    }
+  }
+  return { map, overlap };
+}
+
+function cmapFormat4Encode(map) {
+  /* Ordered delta-only segments plus the mandatory 0xFFFF terminator. */
+  const codes = [...map.keys()].filter((c) => map.get(c)).sort((a, b) => a - b);
+  const segs = [];
+  for (const c of codes) {
+    const last = segs[segs.length - 1];
+    if (last && c === last.end + 1 && map.get(c) - c === last.g - last.start)
+      last.end = c;
+    else segs.push({ start: c, end: c, g: map.get(c) });
+  }
+  segs.push({ start: 0xffff, end: 0xffff, g: 0 });
+  const n = segs.length, len = 16 + 8 * n;
+  const out = new Uint8Array(len), dv = new DataView(out.buffer);
+  let p2 = 1, l2 = 0;
+  while (p2 * 2 <= n) { p2 *= 2; l2++; }
+  dv.setUint16(0, 4); dv.setUint16(2, len); dv.setUint16(4, 0);
+  dv.setUint16(6, 2 * n); dv.setUint16(8, 2 * p2); dv.setUint16(10, l2);
+  dv.setUint16(12, 2 * n - 2 * p2);
+  segs.forEach((sg, i) => {
+    dv.setUint16(14 + 2 * i, sg.end);
+    dv.setUint16(16 + 2 * n + 2 * i, sg.start);
+    const delta = sg.start === 0xffff ? 1 : (sg.g - sg.start) & 0xffff;
+    dv.setUint16(16 + 4 * n + 2 * i, delta);
+    dv.setUint16(16 + 6 * n + 2 * i, 0);
+  });
+  return out;
+}
+
+function repairCmap(u8) {
+  /* Re-encode every overlapping format-4 subtable; null when nothing to do. */
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  if (u8.byteLength < 4) return null;
+  const n = dv.getUint16(2);
+  if (4 + 8 * n > u8.byteLength) return null;
+  const recs = [];
+  let changed = false;
+  for (let i = 0; i < n; i++) {
+    const at = 4 + 8 * i, off = dv.getUint32(at + 4);
+    if (off + 4 > u8.byteLength) return null;
+    const fmt = dv.getUint16(off);
+    /* Subtable length lives in a format-specific field; carry every format
+     * through unchanged except an overlapping format 4. */
+    let len = 0;
+    if (fmt <= 6) len = dv.getUint16(off + 2);
+    else if (fmt === 14) len = off + 6 <= u8.byteLength ? dv.getUint32(off + 2) : 0;
+    else if (off + 8 <= u8.byteLength) len = dv.getUint32(off + 4);
+    if (!len || off + len > u8.byteLength) return null;
+    let data = u8.subarray(off, off + len);
+    if (fmt === 4) {
+      const decoded = cmapFormat4Map(data);
+      if (!decoded) return null;
+      if (decoded.overlap) { data = cmapFormat4Encode(decoded.map); changed = true; }
+    }
+    recs.push({ pid: dv.getUint16(at), eid: dv.getUint16(at + 2), data });
+  }
+  if (!changed) return null;
+  let size = 4 + 8 * n;
+  for (const r of recs) size += r.data.byteLength;
+  const out = new Uint8Array(size), ov = new DataView(out.buffer);
+  ov.setUint16(0, 0); ov.setUint16(2, n);
+  let cursor = 4 + 8 * n;
+  recs.forEach((r, i) => {
+    ov.setUint16(4 + 8 * i, r.pid); ov.setUint16(6 + 8 * i, r.eid);
+    ov.setUint32(8 + 8 * i, cursor);
+    out.set(r.data, cursor);
+    cursor += r.data.byteLength;
+  });
+  return out;
+}
+
+export function repairLegacyTrueType(bytes) {
+  const src = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (bytes.byteLength < 12) return bytes;
+  const count = src.getUint16(4);
+  if (12 + count * 16 > bytes.byteLength) return bytes;
+  const tables = [];
+  for (let i = 0; i < count; i++) {
+    const at = 12 + i * 16;
+    const off = src.getUint32(at + 8), len = src.getUint32(at + 12);
+    if (off + len > bytes.byteLength) return bytes;
+    tables.push({ tag: src.getUint32(at), data: bytes.subarray(off, off + len) });
+  }
+  const OS2 = 0x4f532f32, HEAD = 0x68656164, CMAP = 0x636d6170;
+  let repaired = false;
+  const os2 = tables.find((t) => t.tag === OS2);
+  if (os2 && os2.data.byteLength === 78 &&
+      new DataView(os2.data.buffer, os2.data.byteOffset, 2).getUint16(0) === 0) {
+    const upgraded = new Uint8Array(86);
+    upgraded.set(os2.data);
+    const v1 = new DataView(upgraded.buffer);
+    v1.setUint16(0, 1);            // version 1
+    v1.setUint32(78, 1);           // ulCodePageRange1: Latin 1
+    v1.setUint32(82, 0);           // ulCodePageRange2
+    os2.data = upgraded;
+    repaired = true;
+  }
+  const cmap = tables.find((t) => t.tag === CMAP);
+  const fixedCmap = cmap && repairCmap(cmap.data);
+  if (fixedCmap) { cmap.data = fixedCmap; repaired = true; }
+  if (!repaired) return bytes;
+
+  const pad4 = (n) => (n + 3) & ~3;
+  let size = 12 + count * 16;
+  for (const t of tables) size += pad4(t.data.byteLength);
+  const out = new Uint8Array(size);
+  const dv = new DataView(out.buffer);
+  out.set(bytes.subarray(0, 4));             // sfnt version
+  /* The retail header's binary-search fields are also wrong; derive them. */
+  let pow2 = 1, log2 = 0;
+  while (pow2 * 2 <= count) { pow2 *= 2; log2++; }
+  dv.setUint16(4, count);
+  dv.setUint16(6, pow2 * 16);
+  dv.setUint16(8, log2);
+  dv.setUint16(10, count * 16 - pow2 * 16);
+  const checksum = (u8) => {
+    const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    let sum = 0;
+    for (let i = 0; i < pad4(u8.byteLength); i += 4) {
+      let word = 0;
+      for (let b = 0; b < 4; b++)
+        word = (word << 8) | (i + b < u8.byteLength ? view.getUint8(i + b) : 0);
+      sum = (sum + (word >>> 0)) >>> 0;
+    }
+    return sum;
+  };
+  tables.sort((a, b) => a.tag - b.tag);     // directory must be tag-ordered
+  let cursor = 12 + count * 16;
+  tables.forEach((t, i) => {
+    if (t.tag === HEAD && t.data.byteLength >= 12) {
+      t.data = t.data.slice();
+      new DataView(t.data.buffer).setUint32(8, 0);   // checkSumAdjustment
+    }
+    const at = 12 + i * 16;
+    dv.setUint32(at, t.tag);
+    dv.setUint32(at + 4, checksum(t.data));
+    dv.setUint32(at + 8, cursor);
+    dv.setUint32(at + 12, t.data.byteLength);
+    out.set(t.data, cursor);
+    t.offset = cursor;
+    cursor += pad4(t.data.byteLength);
+  });
+  const head = tables.find((t) => t.tag === HEAD);
+  if (head && head.data.byteLength >= 12)
+    dv.setUint32(head.offset + 8, (0xB1B0AFBA - checksum(out)) >>> 0);
+  return out;
+}

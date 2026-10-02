@@ -336,6 +336,13 @@ const uint8_t *hud_palette(void);
 void hud_set_text(const char *text);
 
 /*
+ * hud_set_text_overlay(on)
+ *   1 (default) draws the text line and weapon row in non-cockpit layouts;
+ *   0 suppresses both. Rendering state only; survives hud_unload.
+ */
+void hud_set_text_overlay(int on);
+
+/*
  * hud_set_orientation(mode) — P3 EXPERIMENT HOOK, call before hud_load().
  *   HUD_ORIENT_SHIPPING    (0) — resolved decodes (vqm row-major,
  *                                .map row-major bottom-up). Default.
