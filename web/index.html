@@ -2140,7 +2140,8 @@ function briefingForPlayer(raw, titled) {
     // Mountain" directly above a title already reading "Race · Cactus
     // Mountain". Match the rest of the line instead.
     .filter((l) => !(titled && /^MISSION \S.*$/.test(l)))
-    .filter((l) => !l.startsWith('(hidden)'))
+    // Base-game .npt files spell the tag "(HIDDEN)".
+    .filter((l) => !/^\(hidden\)/i.test(l))
     .join('\n').replace(/^\n+/, '');
 }
 

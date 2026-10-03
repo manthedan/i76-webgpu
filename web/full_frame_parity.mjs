@@ -97,20 +97,25 @@ const CASES = [
  * move only n01-fx to 0x64fa4c09; HUD exactness and parity limits are unchanged. */
 const SWIFTSHADER_FIDELITY_HASHES = Object.freeze({
   /* Authored horizon layer: only this visible world case changes. */
-  'p01-world': '0xbf65f4ac',
+  /* 2026-10-03: the authored opening user teleport now seeds the player
+   * heading, moving the P01 opening camera by ~4e-6; parity unchanged. */
+  'p01-world': '0x1436020a',
   /* 2026-09-03 steward repin (H-UAT-079d weapon HUD on the Stage-3 tree):
    * measured on the merged tree; each N01 software frame differs from the
    * Stage-3 golden by exactly 2,819 px, all inside the weapon-panel rows
    * (x 225..355, y 8..93: dropper labels/ammo + 30mm cannon armed at load);
    * world/opponent pixels are byte-identical. P01/paper hashes unchanged. */
   'n01-world': '0x01bd8909',
-  'n01-fx': '0x64fa4c09',
+  /* 2026-10-03: decoded NPC launch spread/lead changes in-flight rounds. */
+  'n01-fx': '0xc801136f',
   'p01-title': '0x3b7a1a04',
   /* H-UAT-013: episode card plus a real queued tanker hit; damage safety
    * feedback is the final overlay in both paths. Re-pinned from the first
    * clean SwiftShader run of this exact new case (SW/GPU diff 0.000%). */
   'p01-title-damage': '0xcd412ad8',
-  'p01-map': '0xaed44f01',
+  /* 2026-10-03: map RGB identical; one underlying coverage alpha byte moves
+   * with the P01 opening camera. */
+  'p01-map': '0x4e2aa9e0',
   'n01-view-cycle': '0x01bd8909',
 });
 const FLAGS = [

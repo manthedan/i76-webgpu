@@ -13,6 +13,7 @@
 
 #include "engine/font.h"
 #include "engine/hud.h"
+#include "engine/mission.h"
 #include "engine/pcx.h"
 #include "engine/raster.h"
 #include "engine/terrain.h"
@@ -26,6 +27,8 @@ typedef struct {
 } PaperTile;
 
 static PaperTile   s_map, s_npd;
+static uint8_t    *s_npd_blank;
+static unsigned   s_note_flags[6];
 static PaperTile   s_esc[PAPER_ESC_COUNT];
 static PaperTile   s_title;          /* remapped to level palette indices */
 static PaperSurface s_active = PAPER_NONE;
@@ -127,68 +130,17 @@ static int load_notepad_for_mission(const char *mission_path)
     return -1;
 }
 
-/* WRLD payload +69 is the authored 13-byte NPT name (scene.md), also
- * used by the shell briefing. Chunk sizes include their eight-byte header. */
-static uint32_t paper_u32(const uint8_t *p)
-{
-    return (uint32_t)p[0] | (uint32_t)p[1] << 8 |
-           (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-}
-
-static uint8_t *load_notes(const char *mission_path, size_t *notes_n)
-{
-    size_t n = 0;
-    uint8_t *buf = vfs_read_file(mission_path, &n);
-    if (!buf) return NULL;
-    char name[14] = {0};
-    for (size_t off = 0; off + 8 <= n; ) {
-        uint32_t size = paper_u32(buf + off + 4);
-        if (size < 8 || size > n - off) break;
-        if (memcmp(buf + off, "WDEF", 4) == 0) {
-            size_t end = off + size;
-            for (size_t at = off + 8; at + 8 <= end; ) {
-                uint32_t sub = paper_u32(buf + at + 4);
-                if (sub < 8 || sub > end - at) break;
-                if (memcmp(buf + at, "WRLD", 4) == 0 && sub >= 8 + 69 + 13) {
-                    for (int i = 0; i < 13; i++) {
-                        unsigned char c = buf[at + 8 + 69 + i];
-                        if (c < 32 || c > 126) break;
-                        name[i] = (char)tolower(c);
-                    }
-                    break;
-                }
-                at += sub;
-            }
-            break;
-        }
-        off += size;
-    }
-    vfs_free(buf);
-    return name[0] && vfs_exists(name) ? vfs_read_file(name, notes_n) : NULL;
-}
-
-static void draw_notes(const Font *font, const uint8_t *text, size_t n,
-                       uint8_t *page, int w, int h, uint8_t ink)
+static void draw_notes(const Font *font, uint8_t *page, int w, int h,
+                       uint8_t ink)
 {
     int y = 0;
     int height = (int)font->height;
-    for (size_t pos = 0; pos < n && y + height <= h; ) {
-        size_t end = pos;
-        while (end < n && text[end] != '\n' && text[end] != '\r') end++;
-        if (end - pos >= 9 && memcmp(text + pos, "(failure)", 9) == 0)
-            break;
-        size_t next = end;
-        if (next < n && text[next] == '\r') next++;
-        if (next < n && text[next] == '\n') next++;
-        /* "(hidden)" objectives are revealed later by the mission; the
-         * reveal state is not decoded, so keep them off the page rather
-         * than spoil them (the shell briefing filters them the same way). */
-        if (end - pos >= 8 && strncasecmp((const char *)text + pos,
-                                          "(hidden)", 8) == 0) {
-            pos = next;
-            continue;
-        }
-        if (pos == end) y += height + 2;
+    for (int id = 1; id <= 6 && y + height <= h; id++) {
+        const MissionNote *note = mission_note(id);
+        if (!note) break;
+        if (note->flags & 1) continue;
+        const uint8_t *text = (const uint8_t *)note->text;
+        size_t pos = 0, end = strlen(note->text);
         while (pos < end && y + height <= h) {
             char line[256];
             size_t count = 0, space = 0;
@@ -206,30 +158,37 @@ static void draw_notes(const Font *font, const uint8_t *text, size_t n,
             if (pos + count < end && space) count = space;
             line[count] = '\0';
             font_draw(font, line, page, w, h, 0, y, ink);
+            /* FUN_004591f0 -> FUN_004a2a30 strikes each wrapped success
+             * line at half its text height. Failure has no strike. */
+            if (note->flags & 2) {
+                int width = font_text_width(font, line);
+                if (width > w) width = w;
+                memset(page + (y + height / 2) * w, ink, (size_t)width);
+            }
             pos += count;
             while (pos < end && (text[pos] == ' ' || text[pos] == '\t')) pos++;
             y += height + (height >= 14 ? 4 : 2);
         }
-        pos = next;
+        y += height;
     }
 }
 
-static void write_notepad(const char *mission_path)
+static void write_notepad(void)
 {
-    if (!s_npd.ok) return;
-    size_t n = 0;
-    uint8_t *text = load_notes(mission_path, &n);
-    if (!text) return;
+    if (!s_npd.ok || !s_npd_blank) return;
+    memcpy(s_npd.pix, s_npd_blank, (size_t)s_npd.w * s_npd.h);
     Font *font = font_load(s_npd.w > 320 ? "base6x76.fnt" : "base6x7.fnt");
     if (!font) font = font_load("base6x7.fnt");
-    if (!font) { vfs_free(text); return; }
+    if (!font) return;
 
-    /* PORT DECISION: no decoded native text layout. Use the purchaser's
-     * bitmap font, an inset above the hand, and the briefing's objective
-     * section without "(hidden)" objectives. Static notes, not a
-     * claim of native live objective/status handling; see paper-map.md. */
-    int x = s_npd.w * 84 / 640, y = s_npd.h * 108 / 480;
-    int w = s_npd.w * 440 / 640, h = s_npd.h * 168 / 480;
+    /* Native FUN_00458ca0 uses (82,102), 448x317 in mode 6 and
+     * (40,41), 228x199 in mode 3. PORT DECISION: retain the available
+     * bitmap font instead of the native Windows GDI font. */
+    int x = s_npd.w > 320 ? 82 : 40, y = s_npd.w > 320 ? 102 : 41;
+    int w = s_npd.w > 320 ? 448 : 228, h = s_npd.w > 320 ? 317 : 199;
+    if (x >= s_npd.w || y >= s_npd.h) { font_free(font); return; }
+    if (w > s_npd.w - x) w = s_npd.w - x;
+    if (h > s_npd.h - y) h = s_npd.h - y;
     uint8_t *page = malloc((size_t)w * h);
     if (page && w > 0 && h > 0) {
         for (int row = 0; row < h; row++)
@@ -245,13 +204,16 @@ static void write_notepad(const char *mission_path)
                 if (d < darkest) { darkest = d; ink = (uint8_t)i; }
             }
         }
-        draw_notes(font, text, n, page, w, h, ink);
+        draw_notes(font, page, w, h, ink);
         for (int row = 0; row < h; row++)
             memcpy(s_npd.pix + (y + row) * s_npd.w + x, page + row * w, w);
     }
     free(page);
     font_free(font);
-    vfs_free(text);
+    for (int i = 0; i < 6; i++) {
+        const MissionNote *note = mission_note(i + 1);
+        s_note_flags[i] = note ? note->flags : 0;
+    }
 }
 
 /*
@@ -412,7 +374,12 @@ int paper_load_mission(const char *mission_path)
 
     int map_ok = load_map_for_tag(s_tag) == 0;
     int npd_ok = load_notepad_for_mission(mission_path) == 0;
-    if (npd_ok) write_notepad(mission_path);
+    if (npd_ok) {
+        size_t size = (size_t)s_npd.w * s_npd.h;
+        s_npd_blank = malloc(size);
+        if (s_npd_blank) memcpy(s_npd_blank, s_npd.pix, size);
+        write_notepad();
+    }
     int esc_ok = load_escape_pack() == 0;
     int ttl_ok = load_title_pcx(s_tag) == 0;
     return (map_ok || npd_ok || esc_ok || ttl_ok) ? 0 : -1;
@@ -422,6 +389,9 @@ void paper_unload(void)
 {
     tile_free(&s_map);
     tile_free(&s_npd);
+    free(s_npd_blank);
+    s_npd_blank = NULL;
+    memset(s_note_flags, 0, sizeof s_note_flags);
     for (int i = 0; i < PAPER_ESC_COUNT; i++)
         tile_free(&s_esc[i]);
     tile_free(&s_title);
@@ -646,8 +616,16 @@ void paper_render(uint8_t *fb, int w, int h)
 
     if (s_active == PAPER_MAP && s_map.ok)
         blit_map_with_pin(fb, w, h);
-    else if (s_active == PAPER_NOTEPAD && s_npd.ok)
+    else if (s_active == PAPER_NOTEPAD && s_npd.ok) {
+        for (int i = 0; i < 6; i++) {
+            const MissionNote *note = mission_note(i + 1);
+            if (note && note->flags != s_note_flags[i]) {
+                write_notepad();
+                break;
+            }
+        }
         blit_tile(fb, w, h, &s_npd, 0);
+    }
 
     if (s_escape > PAPER_ESC_NONE && s_escape < PAPER_ESC_COUNT &&
         s_esc[s_escape].ok)

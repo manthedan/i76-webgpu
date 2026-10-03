@@ -124,6 +124,38 @@ static const int s_p1_w8[5][10] = {
     { 2, 16, 80, 2, 20, 12,  1, 20, 3, 200 },
     { 2, 42, 50, 2,  8, 16,  1, 30, 1, 300 }
 };
+/* Native per-record timeout choices, including pursuit 0 for 13/14.
+ * See re/ai-recovery-pursuit.md; duplicate destination 3 in row 14 is real. */
+static const int s_p1_w4[5][10] = {
+    { 2, 2, 0, 3, 6, 4, 1, 0, 3, 50 },
+    { 2, 4, 9, 2, 8, 6, 1, 6, 6, 50 },
+    { 2, 8, 32, 2, 10, 8, 2, 8, 2, 150 },
+    { 2, 16, 50, 2, 25, 12, 4, 20, 1, 200 },
+    { 2, 42, 100, 2, 8, 16, 5, 30, 1, 300 }
+};
+static const int s_p1_w5[5][10] = {
+    { 2, 2, 0, 2, 15, 10, 1, 0, 4, 50 },
+    { 2, 4, 9, 2, 12, 6, 1, 1, 7, 50 },
+    { 2, 8, 10, 2, 8, 8, 1, 2, 5, 150 },
+    { 2, 16, 30, 2, 4, 12, 5, 20, 3, 200 },
+    { 2, 42, 80, 2, 8, 16, 20, 30, 1, 300 }
+};
+static const int s_p0_d13[5] = { 4, 6, 1, 3, 8 };
+static const int s_p0_w13[5][5] = {
+    { 5, 10, 1, 50, 1 },
+    { 4, 20, 2, 40, 1 },
+    { 3, 30, 3, 30, 1 },
+    { 2, 40, 4, 20, 1 },
+    { 1, 50, 5, 10, 1 }
+};
+static const int s_p0_d14[7] = { 4, 6, 3, 1, 3, 9, 8 };
+static const int s_p0_w14[5][7] = {
+    { 5, 10, 30, 5, 10, 300, 1 },
+    { 4, 20, 40, 4, 20, 300, 1 },
+    { 3, 30, 30, 3, 30, 300, 1 },
+    { 2, 40, 20, 2, 40, 300, 1 },
+    { 1, 50, 10, 1, 50, 300, 1 }
+};
 static const int s_p1_d9[7] = { 1, 3, 4, 5, 6, 8, 13 };
 static const int s_p1_w9[5][7] = {
     { 2,  2, 2, 15,  4,  1, 4 },
@@ -404,6 +436,7 @@ static double   s_ai_clock;             /* FUN_004a2be0 stand-in, seconds */
 
 typedef struct {
     int      used;
+    int      class_id;    /* combat registration class; 0 if unknown */
     int      goal;        /* AI_GOAL_*                              */
     double   x, y, z;     /* world position (y frozen per D-A6)     */
     double   contact_vx, contact_vz; /* decaying world contact velocity */
@@ -470,7 +503,9 @@ typedef struct {
     int      turn_state;  /* dest 9 a97c: 1 = close-range offset branch  */
     int      arms_ready;  /* dest 6 FUN_00409050: any ready mount        */
     int      dest9_ready; /* dest 9 FUN_004090f0: rocket / type-4 ready  */
-    double   dest_until;  /* a82c: dest 6/8/9 engage timer, sim seconds  */
+    double   recovery_until;
+    double   recovery_heading, recovery_y, recovery_steer;
+    double   dest_until;  /* a82c: combat engage timer, sim seconds      */
     /* H-UAT-078c: one decoded command drives either route kinematics or the
      * attached physical context. Unpromoted native/dev contexts remain
      * observable no-feedback shadows. */
@@ -805,8 +840,12 @@ static int dest_accept(const AiAgent *a, int dest)
     case 4:
     case 5:
     case 6:
-    case 13:
         return a->arms_ready;
+    case 13: {
+        const AiAgent *t = agent_at(a->target);
+        return t && fabs(a->drive_speed) < 5.0 &&
+               hypot(t->x - a->x, t->z - a->z) < 40.0;
+    }
     case 8:
     case 14:
         return 1;
@@ -860,13 +899,21 @@ static int pick_weighted(const AiAgent *a, const int *dests,
     return 15;
 }
 
-/* FUN_004098a0 timeUp: dest 6/8/9 pursuit-1 re-pick. */
+/* FUN_004098a0 timeUp: per-record pursuit choices (13/14 use pursuit 0). */
 static int pick_timeup_dest(const AiAgent *a, int dest)
 {
     int agg = a->agg;
     if (agg < 0 || agg > 4)
         agg = 4;
-    if (dest == 6 || dest == 4 || dest == 5)
+    if (dest == 4)
+        return pick_weighted(a, s_p1_d68, s_p1_w4[agg], 10);
+    if (dest == 5)
+        return pick_weighted(a, s_p1_d68, s_p1_w5[agg], 10);
+    if (dest == 13)
+        return pick_weighted(a, s_p0_d13, s_p0_w13[agg], 5);
+    if (dest == 14)
+        return pick_weighted(a, s_p0_d14, s_p0_w14[agg], 7);
+    if (dest == 6)
         return pick_weighted(a, s_p1_d68, s_p1_w6[agg], 10);
     if (dest == 8)
         return pick_weighted(a, s_p1_d68, s_p1_w8[agg], 10);
@@ -977,7 +1024,8 @@ static void dest9_plan(AiAgent *a, double dx, double dz, double d,
     double toward = dir_yaw(dx, dz);
     if (a->turn_state && d < 70.0) {
         *desired = ang_wrap(toward + AI_PI);
-        *throttle = 0;
+        /* FUN_00405f70 accelerates; it is not the hard-brake helper. */
+        *throttle = 1;
         return;
     }
     a->turn_state = 0;
@@ -991,9 +1039,21 @@ static void apply_combat_dest(AiAgent *a, int dest)
     a->combat_dest = dest;
     a->turn_state = dest == 9 ? 1 : 0;
     /* FUN_00408fa0 / 095a0 / 09260 / 08ec0: a82c = now + hold. */
-    if (dest == 6 || dest == 5 || dest == 13)
+    if (dest == 13)
+        hold = 5.0 + (double)(ai_rng() % 4u);
+    else if (dest == 14) {
+        const AiAgent *t = agent_at(a->target);
+        /* PORT DECISION: retain 09670's draw until native a998 has a
+         * separate firing-target owner. CombatEnt.eng_target also owns
+         * chase/acquisition; clearing it would cancel pursuit. See
+         * re/ai-recovery-pursuit.md, firing-target consumption boundary. */
+        (void)ai_rng();
+        /* FUN_0045a0a0 tests class, not the existence of an AI agent. */
+        hold = t && (t->class_id == 1 || t->class_id == 8 || t->class_id == 9)
+             ? 0.3 + 0.1 * a->agg : 0.5;
+    } else if (dest == 6 || dest == 5)
         hold = 20.0 + (double)(ai_rng() % 15u);
-    else if (dest == 8 || dest == 14)
+    else if (dest == 8)
         hold = 10.0 + (double)(ai_rng() % 10u);
     else if (dest == 9 || dest == 4)
         hold = dest == 4 ? 7.0 : 7.0 + (double)(ai_rng() % 10u);
@@ -1208,6 +1268,13 @@ int ai_shadow_telemetry(int ent, AiShadowTelemetry *out)
     out->state_trace_hash = a->shadow_state_trace_hash;
     out->last_state_hash = a->shadow_last_state_hash;
     return 0;
+}
+
+void ai_set_class(int ent, int class_id)
+{
+    AiAgent *a = agent_at(ent);
+    if (a)
+        a->class_id = class_id;
 }
 
 void ai_set_flyer(int ent, int on)
@@ -1492,6 +1559,7 @@ static void follow_set(int ent, int target_ent, double xoff_m, double speed,
     a->combat_seek = combat_owned ? 1 : 0;
     a->combat_dest = 0;
     a->turn_state = 0;
+    a->recovery_until = 0.0;
     a->speed   = speed > 0.0 ? clamp_speed(speed) : AI_FOLLOW_SPEED;
     a->arrived = 0;
     a->at_follow = 0;
@@ -1523,7 +1591,7 @@ void ai_combat_chase(int ent, int target_ent, double speed)
         (void)physical_activate(a, 0);
         a->combat_seek = 1;
         a->follow_hold_dist = 0.0;
-        if (keep)
+        if (keep && a->combat_dest != keep)
             apply_combat_dest(a, keep);
         else if (a->combat_dest == 0)
             apply_combat_dest(a, pick_init_dest(a));
@@ -2592,6 +2660,7 @@ void ai_tick(double dt, void (*resolve)(int ent, double out[3]),
         physical_sync(a);
         /* Native sit is steer=0/full brake. It is also the safe default for
          * an idle/unresolved brain; a movement primitive replaces it below. */
+        double previous_steer = a->drive_command.steer;
         memset(&a->drive_command, 0, sizeof a->drive_command);
         a->drive_command.brake = 1.0;
         a->drive_command.arrival_intent = a->arrived || a->at_follow;
@@ -2866,16 +2935,41 @@ void ai_tick(double dt, void (*resolve)(int ent, double out[3]),
                 int dest = a->combat_dest;
                 int motion = dest;
                 int throttle = 1;
+                int blocked = 0;
                 double desired = seek_yaw;
                 AiAgent *tgt = agent_at(a->target);
-                /* FUN_004098a0: dest 6/8/9 timeUp re-picks from pursuit-1
-                 * when a82c expires. */
-                if (a->dest_until > 0.0 && s_ai_clock >= a->dest_until &&
+                if (a->physical_authority && a->recovery_until > 0.0) {
+                    double turn = fabs(ang_wrap(a->heading - a->recovery_heading));
+                    if (s_ai_clock > a->recovery_until ||
+                        fabs(a->y - a->recovery_y) > 3.0 ||
+                        (turn >= 1.5 && fabs(a->drive_speed) < 1.0)) {
+                        a->recovery_until = 0.0;
+                    } else {
+                        /* 00409c50: brake forward motion, back straight to
+                         * -8 m/s, then turn opposite the entry steer. The
+                         * shared car's reverse taper remains authoritative. */
+                        brain_emit_controls(a, a->heading, -20.0, 1, dt);
+                        if (a->drive_speed > 0.1 || turn >= 1.5) {
+                            a->drive_command.throttle = 0.0;
+                            a->drive_command.brake = 1.0;
+                        } else if (a->drive_speed > -8.0) {
+                            a->drive_command.throttle = 0.9999;
+                            a->drive_command.brake = 0.0;
+                        } else {
+                            a->drive_command.steer = a->recovery_steer <= 0.0
+                                                     ? 0.95 : -0.95;
+                        }
+                        continue;
+                    }
+                }
+                /* FUN_004098a0 (strict now > a82c): timeUp re-engages the
+                 * selected behavior, even when the draw returns the same
+                 * destination. */
+                if (a->dest_until > 0.0 && s_ai_clock > a->dest_until &&
                     (dest == 6 || dest == 8 || dest == 9 ||
-                     dest == 4 || dest == 5)) {
+                     dest == 4 || dest == 5 || dest == 13 || dest == 14)) {
                     int nd = pick_timeup_dest(a, dest);
-                    if (nd != dest)
-                        apply_combat_dest(a, nd);
+                    apply_combat_dest(a, nd);
                     dest = a->combat_dest;
                     motion = dest;
                 }
@@ -2892,9 +2986,26 @@ void ai_tick(double dt, void (*resolve)(int ent, double out[3]),
                         double hz = cos(a->heading);
                         if (whisker_blocked(a, i, query, a->x, a->z,
                                             a->x + hx * AI_WHISKER_RANGE,
-                                            a->z + hz * AI_WHISKER_RANGE) == AI_WHISKER_BLOCKED)
+                                            a->z + hz * AI_WHISKER_RANGE) == AI_WHISKER_BLOCKED) {
                             motion = 17;
+                            blocked = 1;
+                        }
                     }
+                }
+                if (blocked && a->physical_authority && !a->flyer &&
+                    fabs(a->drive_speed) < 0.1) {
+                    /* PORT DECISION: the existing blocked whisker plus a
+                     * stopped body approximates 00409fd0 -> 00403290's
+                     * physical collision prediction (RE demand: Gate 17
+                     * recovery). Native 00409b90 selects reverse for 4 s. */
+                    a->recovery_until = s_ai_clock + 4.0;
+                    a->recovery_heading = a->heading;
+                    a->recovery_y = a->y;
+                    a->recovery_steer = previous_steer;
+                    brain_emit_controls(a, a->heading, -20.0, 1, dt);
+                    a->drive_command.throttle = 0.9999;
+                    a->drive_command.brake = 0.0;
+                    continue;
                 }
                 if (motion == 20) {
                     desired = seek_yaw;
@@ -2913,6 +3024,12 @@ void ai_tick(double dt, void (*resolve)(int ent, double out[3]),
                     throttle = 0;
                 }
                 desired = whisker_desired(a, i, query, desired);
+                if (motion == 13 && a->physical_authority) {
+                    a->combat_steer_bias = combat_bias;
+                    brain_emit_controls(a, desired, -20.0, throttle, dt);
+                    a->combat_steer_bias = 0.0;
+                    continue;
+                }
                 if (!throttle) {
                     a->combat_steer_bias = combat_bias;
                     (void)drive_actuator_tick(a, desired, 0, dt);

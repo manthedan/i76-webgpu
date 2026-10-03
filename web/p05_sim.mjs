@@ -271,11 +271,12 @@ function journey(lose) {
       }
     }
     /* When Toupee turns west onto the warehouse approach, regroup instead of
-     * chasing a remote straggler. Never suppress a visible actor currently
-     * targeting Toupee; the corrected pool timing can leave one active here. */
+     * chasing a remote straggler. Keep defending either live escort participant:
+     * a surviving attacker can switch from Toupee to the player here. */
     if (!lose && truck && truck.x < 7100 && truck.z > 46600 &&
         !finalVisible && kills < 8 &&
-        (!threat || threat.engTarget !== ENT_TOUPEE)) {
+        (!threat || (threat.engTarget !== ENT_TOUPEE &&
+                     threat.engTarget !== ENT_USER))) {
       threat = null;
     }
 

@@ -466,6 +466,10 @@ void ai_shadow_set_world(const struct CarCollider *list, int n,
 int ai_drive_command(int ent, AiDriveCommand *out);
 int ai_shadow_telemetry(int ent, AiShadowTelemetry *out);
 
+/* combat_register supplies the resolved body class after ai_agent_init.
+ * Unknown entities are ignored; unclassified agents default to class 0. */
+void ai_set_class(int ent, int class_id);
+
 /* D-A23: class-9 (helicopter) movers follow the authored polyline and
  * never enter the ground A*. Call after ai_agent_init when the ODEF
  * class is 9. Unknown entities are ignored. */

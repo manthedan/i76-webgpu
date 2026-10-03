@@ -174,8 +174,8 @@
  *  D21 Exact gate leaf consumed from Phase A-depth: triggerGate resolves
  *      the entity's scene object and clears its first class-7 gate-part state
  *      (FUN_00456270). Open gate parts leave render/export and collision;
- *      the native animation remains unmodeled. `reveal` stays unsupported
- *      until the native objective table and a presentation consumer exist.
+ *      the native animation remains unmodeled. Notebook reveal/status now
+ *      consumes the native six-entry NPT table (objective-cues.md).
  *
  * D-O1..D-O13 are the FSM-LESS OBJECTIVE CONTROLLER's decisions and live
  * with it, above objectives_init(). They are numbered apart because they
@@ -541,6 +541,8 @@ static int           s_state;                       /* MISSION_*        */
 /* Raw positive 1-based SECOND failAllObj operand. It is deliberately
  * separate from s_message: diagnostics are presentation, not control data. */
 static int           s_fail_text_index;
+static MissionNote   s_notes[6];
+static int           s_note_count;
 static char          s_message[MISSION_MSG_MAX];
 static int           s_have_message;
 
@@ -1742,6 +1744,50 @@ static void story_field_copy(char out[14], const uint8_t *src)
     out[n] = '\0';
 }
 
+/* FUN_00458890: ordered NPT lines, six objectives, case-insensitive tags.
+ * Failure prose belongs to the existing debrief path, not this table. */
+static void notes_load(const char *name)
+{
+    size_t n = 0;
+    uint8_t *text = vfs_exists(name) ? vfs_read_file(name, &n) : NULL;
+    if (!text) return;
+    for (size_t pos = 0; pos < n && s_note_count < 6; ) {
+        size_t end = pos;
+        while (end < n && text[end] && text[end] != '\n' && text[end] != '\r') end++;
+        if (end - pos >= 9 && !strncasecmp((const char *)text + pos, "(failure)", 9))
+            break;
+        size_t next = end;
+        if (next < n && text[next] == '\r') next++;
+        if (next < n && text[next] == '\n') next++;
+        if (next == pos) break;
+        /* FUN_004a2690 skips separator whitespace: blank lines take no slot. */
+        size_t first = pos;
+        while (first < end && isspace(text[first])) first++;
+        if (first < end) {
+            pos = first;
+            MissionNote *note = &s_notes[s_note_count++];
+            if (end - pos >= 8 && !strncasecmp((const char *)text + pos, "(hidden)", 8)) {
+                note->flags = 1;
+                pos += 8;
+                while (pos < end && isspace(text[pos])) pos++;
+            }
+            size_t len = end - pos;
+            if (len >= sizeof note->text) len = sizeof note->text - 1;
+            memcpy(note->text, text + pos, len);
+            note->text[len] = '\0';
+        }
+        if (end < n && !text[end]) break;
+        pos = next;
+    }
+    vfs_free(text);
+}
+
+const MissionNote *mission_note(int objective_id)
+{
+    return objective_id > 0 && objective_id <= s_note_count
+         ? &s_notes[objective_id - 1] : NULL;
+}
+
 static void story_fields_load(const uint8_t *wdef, size_t len)
 {
     for (size_t off = 0; off < len; ) {
@@ -1753,6 +1799,11 @@ static void story_fields_load(const uint8_t *wdef, size_t len)
                 const uint8_t *p = wdef + c.payload;
                 story_field_copy(s_story_clip[MISSION_STORY_INTRO], p + 4);
                 story_field_copy(s_story_clip[MISSION_STORY_OUTRO], p + 17);
+            }
+            if (c.total - 8 >= 82) {
+                char name[14];
+                story_field_copy(name, wdef + c.payload + 69);
+                if (name[0]) notes_load(name);
             }
             return;
         }
@@ -3662,13 +3713,16 @@ static int32_t mission_dispatch(void *ud, int action_index,
         s_state = MISSION_COMPLETE;
         return 0;
     }
-    if (!strcmp(name, "success") || !strcmp(name, "fail")) {
-        int32_t id = nargs > 0 ? *args[0] : -1;
-        char line[MISSION_MSG_MAX];
-        snprintf(line, sizeof line, "objective %s(%d)", name, (int)id);
-        msg_set(line);
-        ledger_note(action_index, name, LEDGE_TODO,
-                    "single-objective completion state not modeled (D9)");
+    if (!strcmp(name, "success") || !strcmp(name, "fail") ||
+        !strcmp(name, "reveal")) {
+        int id = nargs > 0 ? (int)*args[0] : -1;
+        if (id > 0 && id <= s_note_count) {
+            unsigned *flags = &s_notes[id - 1].flags;
+            /* FUN_00459330/3a0/440: reveal preserves status; first terminal
+             * status wins, and succeeding a hidden line does not reveal it. */
+            if (!strcmp(name, "reveal")) *flags &= ~1u;
+            else if (!(*flags & 6)) *flags |= !strcmp(name, "success") ? 2u : 4u;
+        }
         return 0;
     }
 
@@ -3832,9 +3886,10 @@ static int32_t mission_dispatch(void *ud, int action_index,
     }
     if ((!strcmp(name, "teleport") && nargs == 4) ||
         (!strcmp(name, "teleportOffset") && nargs == 6)) {
-        /* PORT DECISION: retain the legacy fourth-operand height and route
-         * continuation here. Native uses a heading angle; that broader motion
-         * correction is separate from placement ordering (teleport-order.md).
+        /* PORT DECISION: retain the legacy height and route continuation
+         * pending TP-ground-origin (teleport-order.md). Operand four also
+         * supplies the decoded native player heading. NPC heading/grounding
+         * remains on the legacy contract; changing it also changes combat.
          * dx/dz are the native teleportOffset deltas scaled by 0.01. */
         int e = arg_ent(args, 0, nargs, name);
         const float *pts = NULL;
@@ -3851,6 +3906,16 @@ static int32_t mission_dispatch(void *ud, int action_index,
                             e, s_ents[e].scene_obj,
                             MISSION_VEHICLE_SPAWN_FSM_TELEPORT,
                             (double)pts[0] + dx, (double)pts[2] + dz, y);
+                if (s_ents[e].is_user) {
+                    int angle = *args[3];
+                    if (angle < 0 || angle > 360)
+                        fprintf(stdout, "[mission] teleport angle out of bounds: %d\n",
+                                angle);
+                    if (angle > 179) angle -= 360;
+                    /* FUN_00406120 / DAT_004c1680: float degree conversion;
+                     * native forward +sin maps to the car's negative yaw. */
+                    ai_seed_heading(e, -(double)((float)angle * 0.017445918172597885f));
+                }
                 ai_teleport(e, (int)*args[1], pts, n, (double)*args[2],
                             y, dx, dz);
                 if (s_ents[e].is_user) {
@@ -4236,6 +4301,8 @@ static void mission_runner_reset(void)
 
     s_state = MISSION_RUNNING;
     s_fail_text_index = 0;
+    memset(s_notes, 0, sizeof s_notes);
+    s_note_count = 0;
     s_have_message = 0;
     s_message[0] = '\0';
     s_tick = 0;

@@ -94,9 +94,10 @@ typedef struct {
     int  armed;                          /* 1 = Space fires this hardpoint */
     int  fired;                          /* fired on latest Space trigger   */
     double pspeed;                       /* ORDF flight speed, m/s          */
+    double launch_spread;                /* GDFC +98 launch degrees         */
     double aim_speed;                    /* GDFC +86 convergence operand     */
     int    ordnance_type;                /* ORDF +0 flight dispatcher        */
-    int    manager_type;                 /* ORDF +12 AI decision branch      */
+    int    manager_type;                 /* ORDF +12 legacy NPC selector     */
     int    family, tier;                 /* GDFC pair; (3,3) skips pitch     */
     int    traverses;
     int    deploy_kind;                  /* CAR_DEPLOY_*; no projectile      */
@@ -231,6 +232,8 @@ static uint32_t s_fire_rng = 0x7C0B471u;
 /* T_D consumes the native rand()%1000-500 role from a separate fixed stream;
  * no libc rand or accuracy dice enter the deterministic sim. */
 static uint32_t s_aim_rng = 0x1A76D00Du;
+/* PORT DECISION: isolated repeatable 15-bit draws, not Nitro CRT stream parity. */
+static uint32_t s_spread_rng = 0x76A1B00Du;
 static uint32_t fire_rng(void)
 {
     uint32_t x = s_fire_rng;
@@ -527,6 +530,8 @@ static void turret_converge(int owner_ent, int target_ent,
                    rv[2] * delta[2]) / denom;
     if (lead < 0.0) lead = 0.0;
     if (lead > 5.0) lead = 5.0;
+    /* PORT DECISION: linear prediction also stands in for the undecoded
+     * high-angular-rate branch of FUN_004012a0 (aim-convergence.md §2.1). */
     double q[3] = { pt[0] + (lead + 0.09) * target->vx,
                     pt[1] + (lead + 0.09) * target->vy,
                     pt[2] + (lead + 0.09) * target->vz };
@@ -683,6 +688,7 @@ void combat_reset(void)
     s_crng = 0xC0BA47u;
     s_fire_rng = 0x7C0B471u;
     s_aim_rng = 0x1A76D00Du;
+    s_spread_rng = 0x76A1B00Du;
     s_wreck_rng = 0xDEA74E5u;
     memset(s_fx, 0, sizeof s_fx);
     s_fx_seed = 0;
@@ -700,6 +706,7 @@ void combat_register(int ent, int team, int class_id, int scene_obj,
     e->used      = 1;
     e->team      = team;
     e->class_id  = class_id;
+    ai_set_class(ent, class_id);
     e->scene_obj = scene_obj;
     e->has_obj   = team >= 0;
     snprintf(e->label, sizeof e->label, "%s", label ? label : "?");
@@ -848,6 +855,7 @@ int combat_player_weapon_add(const char *name, int damage, int ammo,
     if (have_source) {
         w->pspeed = wi.flight_speed;
         w->aim_speed = wi.projectile_speed;
+        w->launch_spread = wi.launch_spread;
         w->ordnance_type = wi.ordnance_type;
         w->manager_type = wi.manager_type;
         w->family = wi.family;
@@ -2400,12 +2408,46 @@ static void deployed_tick(void)
     }
 }
 
+/* FACT npc-aim.md: Nitro's ordinary launch branch is asymmetric: only
+ * two positive draws admit yaw, and the subsequent pitch test is unreachable
+ * for nonnegative authored spread. Do not replace it with a symmetric cone. */
+static void launch_spread(int type, double degrees, double frame[12])
+{
+    switch (type) {
+    case 1: case 4: case 5: case 6: case 7: case 0xf: case 0x10:
+    case 0x12: case 0x13: case 0x15: case 0x16: break;
+    default: return; /* Other launch-state branches remain PORT DECISION. */
+    }
+    if (!(degrees > 0.0) || !isfinite(degrees)) return;
+    double u[3];
+    for (int i = 0; i < 3; i++) {
+        uint32_t x = s_spread_rng;
+        x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+        s_spread_rng = x;
+        u[i] = (double)(x & 0x7fffu) * 0.000030518509447574615;
+    }
+    double a = 2.0 * degrees * u[0] - degrees;
+    double b = 2.0 * degrees * u[1] - degrees;
+    if (!(a > 0.0 && b > 0.0)) return;
+    double theta = a * 0.01745329238474369;
+    double c = cos(theta), s = sin(theta);
+    for (int i = 0; i < 3; i++) {
+        double right = frame[i], forward = frame[6+i];
+        frame[i] = c * right - s * forward;
+        frame[6+i] = s * right + c * forward;
+    }
+    double norm = sqrt(frame[6]*frame[6]+frame[7]*frame[7]+frame[8]*frame[8]);
+    if (norm > 0.0)
+        for (int i = 0; i < 3; i++)
+            frame[9+i] += frame[6+i]/norm * u[2] * 0.6000000238418579;
+}
+
 /* Single source of truth for the selected weapon's real spawn frame. Fixed
  * mounts preserve their composed HLOC/GPOF Y axis; traversing mounts apply
  * the current live joints before both the projectile and reticle consume it. */
 static int player_weapon_launch_frame(const CombatWeapon *weapon,
                                       double fallback_fx, double fallback_fz,
-                                      double sp[3], double dir[3])
+                                      double sp[3], double dir[3], int spread)
 {
     if (s_user < 0 || !s_have_upose || !weapon || !sp || !dir)
         return -1;
@@ -2421,6 +2463,9 @@ static int player_weapon_launch_frame(const CombatWeapon *weapon,
             else
                 memcpy(live, neutral, sizeof live);
             player_frame_world(live, world_frame);
+            if (spread)
+                launch_spread(weapon->ordnance_type, weapon->launch_spread,
+                              world_frame);
             sp[0] = world_frame[9]; sp[1] = world_frame[10];
             sp[2] = world_frame[11];
             dir[0] = world_frame[6]; dir[1] = world_frame[7];
@@ -2447,7 +2492,7 @@ static int fire_projectile(CombatWeapon *weapon, int *cool, double fx,
     *cool = weapon->cooldown;
 
     double sp[3], dir[3];
-    if (player_weapon_launch_frame(weapon, fx, fz, sp, dir) != 0)
+    if (player_weapon_launch_frame(weapon, fx, fz, sp, dir, 1) != 0)
         return 0;
     memcpy(s_last_user_muzzle, sp, sizeof sp);
     s_have_last_user_muzzle = 1;
@@ -2670,35 +2715,68 @@ int combat_nearest_enemy(int ent)
  * Accepted fire is not a hit: the traveling projectile still owns contact. */
 static int npc_lead_accept(int attacker, int target,
                            const CarCombatWeapon *w, const AiDirectorState *ds,
-                           double fdx, double fdz)
+                           const double frame[12])
 {
     CombatEnt *a = ent_at(attacker), *t = ent_at(target);
     if (!a || !t || !(w->flight_speed > 0.0)) return 0;
-    double rx=t->px-a->px, rz=t->pz-a->pz;
-    double pvx=fdx*w->flight_speed+a->vx;
-    double pvz=fdz*w->flight_speed+a->vz;
-    double rvx=pvx-t->vx, rvz=pvz-t->vz;
-    double vv=rvx*rvx+rvz*rvz;
-    if (vv < 1e-12) return 0;
-    double lead=(rvx*rx+rvz*rz)/vv;
+    /* FUN_00401610 uses the attachment origin and all three velocity axes;
+     * its manager speed comes from FUN_004ac460's ordnance prototype. */
+    double r[3] = {t->px-frame[9], t->py-frame[10], t->pz-frame[11]};
+    double v[3] = {frame[6]*w->flight_speed+a->vx-t->vx,
+                   frame[7]*w->flight_speed+a->vy-t->vy,
+                   frame[8]*w->flight_speed+a->vz-t->vz};
+    double vv = v[0]*v[0]+v[1]*v[1]+v[2]*v[2];
+    double lead = vv < 0.01 ? 10000000.0
+                  : (v[0]*r[0]+v[1]*r[1]+v[2]*r[2])/vv;
     uint32_t x=s_aim_rng; x^=x<<13; x^=x>>17; x^=x<<5; s_aim_rng=x;
-    int r=(int)(x%1000u)-500;
-    /* FACT fire-delivery.md §4: native T_D perturbation, seconds. */
-    lead += (1.0-(double)ds->aim_error)*0.00055*(double)r;
+    int draw=(int)(x%1000u)-500;
+    lead += (1.0-(double)ds->aim_error)*0.00055*(double)draw;
     if (lead < 0.0) lead=0.0;
-    double mx=rx-rvx*lead, mz=rz-rvz*lead;
-    double d2=rx*rx+rz*rz;
-    /* FACT fire-delivery.md §4: decoded FUN_00401610 globals select a
-     * predicted-separation threshold by vehicle range; family 4 scales it. */
+    if (lead >= 4.0) return 0;
+    double separation2 = 0.0;
+    for (int i = 0; i < 3; i++) {
+        double miss = r[i]-v[i]*lead;
+        separation2 += miss*miss;
+    }
+    double dx=t->px-a->px, dz=t->pz-a->pz, d2=dx*dx+dz*dz;
     double threshold = 20.0;
-    if (t->class_id == 1)
+    if (t->class_id == 1) {
         threshold = d2 < 144.0 ? 3.0 : d2 < 625.0 ? 6.0 : 10.0;
-    if (w->family == 4) threshold *= 0.7;
-    return sqrt(mx*mx+mz*mz) < threshold;
+        if (w->family == 4) threshold *= 0.7;
+    }
+    if (sqrt(separation2) >= threshold) return 0;
+    /* FACT FUN_00401610: veto a predicted same-team car crossing the lane.
+     * PORT DECISION: live visible registered cars represent its collision
+     * iterator; native inactive-object membership remains unverified. */
+    for (int i = 0; i < COMBAT_MAX_ENTS; i++) {
+        CombatEnt *f = &s_cents[i];
+        if (i == attacker || i == target || !f->used || !f->has_obj ||
+            !f->alive || f->hidden || f->class_id != 1 || f->team != a->team)
+            continue;
+        double fx = f->px-a->px, fz = f->pz-a->pz, fd2 = fx*fx+fz*fz;
+        if (fd2 > 10000.0) continue;
+        double fr[3] = {f->px-frame[9], f->py-frame[10], f->pz-frame[11]};
+        double fv[3] = {frame[6]*w->flight_speed+a->vx-f->vx,
+                        frame[7]*w->flight_speed+a->vy-f->vy,
+                        frame[8]*w->flight_speed+a->vz-f->vz};
+        double fv2 = fv[0]*fv[0]+fv[1]*fv[1]+fv[2]*fv[2];
+        double ft = fv2 < 0.01 ? 10000000.0
+                    : (fv[0]*fr[0]+fv[1]*fr[1]+fv[2]*fr[2])/fv2;
+        if (ft < 0.0) ft = 0.0;
+        if (ft >= 4.0) continue;
+        double miss2 = 0.0;
+        for (int j = 0; j < 3; j++) {
+            double miss = fr[j]-fv[j]*ft;
+            miss2 += miss*miss;
+        }
+        if (s_user < 0 || (miss2 < 64.0 && (fd2 >= 64.0 || miss2 < 4.0)))
+            return 0;
+    }
+    return 1;
 }
 
 static int npc_fire_accept(int ent, int target, const CarCombatWeapon *w,
-                           double fdx, double fdz)
+                           const double frame[12])
 {
     AiDirectorState ds;
     if (ai_director_state(ent, &ds) != 0)
@@ -2706,14 +2784,14 @@ static int npc_fire_accept(int ent, int target, const CarCombatWeapon *w,
     double p = ds.fire_probability;
     if (!(p > 0.0))
         return 0;
-    /* FUN_00401610 switches on its internal weapon-manager type, not GDFC
-     * family (+16). Only the GDF family→manager-type cases established by
-     * Phase A may use a family-specific branch here; the remaining direct
-     * weapons use the recovered gun gate rather than guessing that mapping. */
+    /* PORT DECISION: retain the legacy ORDF +12 selector for now. Fresh
+     * FUN_004aed70 decode identifies the native selector as GDFC family,
+     * with tier-specific branches and a friendly-lane veto (npc-aim.md).
+     * The shared gun lead calculation below is only one of those predicates. */
     int accepted;
     switch (w->manager_type) {
-    case 0:                               /* FACT: FUN_00401610 case 0 */
-    case 8:                               /* FACT: default abort (Blox) */
+    case 0:                               /* legacy no-fire manager */
+    case 8:                               /* legacy Blox exclusion */
         return 0;
     case 3:                               /* separate predictive branch */
         accepted = 1;
@@ -2738,7 +2816,7 @@ static int npc_fire_accept(int ent, int target, const CarCombatWeapon *w,
          w->manager_type == 4) && !combat_can_see(ent, target))
         return 0;
     if (w->manager_type == 1 || w->manager_type == 2)
-        return npc_lead_accept(ent, target, w, &ds, fdx, fdz);
+        return npc_lead_accept(ent, target, w, &ds, frame);
     return 1;
 }
 
@@ -2763,21 +2841,15 @@ static int npc_fire(int attacker, int target, double distance,
         if (e->weapon_cool[slot] > 0 || w->ammo == 0)
             continue;
         if (w->deploy_kind != CAR_DEPLOY_NONE) {
-            /* FACT FUN_00401610 + ORDF +12: oil/caltrops (manager 0) and
-             * Blox (manager 8) never accept — do not even arm cadence.
-             * Landmines / Car-E-Racer (manager 2) share the gun T_C / LOS
-             * / lead gate. Fire-Dropper (manager 4) uses the type-4 T_C²
-             * / LOS gate. There is no hit-latch dump. Lead uses the hitch
-             * facing (FUN_004aeeb0 writes the attachment frame). */
+            /* PORT DECISION: retain legacy ORDF +12 deployer routing until
+             * native family/tier dispatch is consumed (npc-aim.md). Managers
+             * 0/8 do not arm cadence; manager 2 uses the shared T_C / LOS /
+             * lead gate, manager 4 the T_C² / LOS gate. No hit-latch dump.
+             * This fallback uses the hitch facing; native FUN_004aeeb0
+             * supplies the attachment frame to its decision predicate. */
             if (w->manager_type != 2 && w->manager_type != 4)
                 continue;
             double dir = w->rear_facing ? -1.0 : 1.0;
-            double lfx = fdx * dir, lfz = fdz * dir;
-            if (!npc_fire_accept(attacker, target, w, lfx, lfz)) {
-                e->weapon_cool[slot] = w->cooldown_ticks > 0
-                                     ? w->cooldown_ticks : 1;
-                continue;
-            }
             double sp[3];
             if (fx_position(attacker, sp) != 0)
                 continue;
@@ -2787,6 +2859,14 @@ static int npc_fire(int attacker, int target, double distance,
             sp[1] += w->muzzle[1];
             sp[2] += -w->muzzle[0] * sin(rear_heading) +
                       w->muzzle[2] * cos(rear_heading);
+            double frame[12] = {0};
+            frame[6] = fdx * dir; frame[8] = fdz * dir;
+            memcpy(frame + 9, sp, sizeof sp);
+            if (!npc_fire_accept(attacker, target, w, frame)) {
+                e->weapon_cool[slot] = w->cooldown_ticks > 0
+                                     ? w->cooldown_ticks : 1;
+                continue;
+            }
             (void)deployed_spawn(attacker, w->deploy_kind, w->damage,
                                  w->ordnance_model, w->impact_car, sp);
             if (w->ammo > 0) w->ammo--;
@@ -2811,17 +2891,22 @@ static int npc_fire(int attacker, int target, double distance,
             double dir = w->rear_facing ? -1.0 : 1.0;
             launch_fdx = fdx * dir; launch_fdy = 0.0;
             launch_fdz = fdz * dir;
+            world_frame[6] = launch_fdx; world_frame[7] = launch_fdy;
+            world_frame[8] = launch_fdz;
         }
         int continuing = e->burst_left[slot] > 0;
         triggered = 1;
         if (!continuing &&
-            !npc_fire_accept(attacker, target, w, launch_fdx, launch_fdz)) {
+            !npc_fire_accept(attacker, target, w, world_frame)) {
             e->weapon_cool[slot] = w->cooldown_ticks > 0
                                  ? w->cooldown_ticks : 1;
             continue;                       /* rejected aim consumes cadence */
         }
         CombatEnt *t = ent_at(target);
         if (!t || !t->alive) break;
+        launch_spread(w->ordnance_type, w->launch_spread, world_frame);
+        launch_fdx = world_frame[6]; launch_fdy = world_frame[7];
+        launch_fdz = world_frame[8];
         double sp[3] = { world_frame[9], world_frame[10], world_frame[11] };
         double speed = w->flight_speed > 0.0 ? w->flight_speed
                                              : w->projectile_speed;
@@ -3139,11 +3224,9 @@ void combat_tick(void)
         dx = t->px - e->px;
         dz = t->pz - e->pz;
         d = sqrt(dx * dx + dz * dz);
-        /* Native FUN_00401610 also gates by mount-facing dots. The port has
-         * no turret aim block yet, but the mover heading is available: keep
-         * front mounts inside the decoded 5-degree direct-fire cone. Rear
-         * mounts use the opposite direction. This removes omnidirectional
-         * authored MG damage without inventing a miss probability. */
+        /* The shared gun predicate owns muzzle-relative acceptance and
+         * friendly-lane suppression, without a hull cone (npc-aim.md).
+         * PORT DECISION: retain the old cone for other legacy managers. */
         if (!t->hidden && d > 1e-6) {
             double heading = ai_get_heading(i);
             /* ai.c heading is the car.h yaw convention: forward (-sin,+cos). */
@@ -3174,6 +3257,8 @@ void combat_tick(void)
                         &weapon->turret_pitch_on_target);
                     continue;
                 }
+                if (weapon->manager_type == 1 || weapon->manager_type == 2)
+                    continue;
                 if (weapon->rear_facing ||
                     weapon->deploy_kind != CAR_DEPLOY_NONE) continue;
                 double dot = (fdx * dx + fdz * dz) / d;
@@ -3186,6 +3271,8 @@ void combat_tick(void)
              * temporarily mirroring the same dot test. */
             for (int w = 0; w < e->weapon_count; w++)
                 if (e->weapons[w].rear_facing &&
+                    e->weapons[w].manager_type != 1 &&
+                    e->weapons[w].manager_type != 2 &&
                     !e->weapons[w].traverses &&
                     e->weapons[w].deploy_kind == CAR_DEPLOY_NONE) {
                     double dot = -(fdx * dx + fdz * dz) / d;
@@ -3393,7 +3480,7 @@ int combat_player_launch_frame(double origin[3], double direction[3])
     double facing = weapon && weapon->rear ? -1.0 : 1.0;
     return player_weapon_launch_frame(weapon, -sin(s_uyaw) * facing,
                                       cos(s_uyaw) * facing,
-                                      origin, direction);
+                                      origin, direction, 0);
 }
 
 double combat_player_weapon_traverse_yaw(int source)

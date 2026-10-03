@@ -431,9 +431,10 @@ typedef struct {
     int         turreted;          /* decoded effective-class-3 link ban */
     int         link_class;        /* CAR_WEAPON_LINK_* manual taxonomy */
     double      projectile_speed; /* GDFC +86 legacy/presentation speed */
+    double      launch_spread;    /* GDFC +98, native degrees            */
     double      flight_speed;     /* ORDF +4 native ordnance speed       */
     int         ordnance_type;    /* ORDF +0 flight/collision dispatcher */
-    int         manager_type;     /* ORDF +12 FUN_00401610 branch        */
+    int         manager_type;     /* ORDF +12 legacy NPC selector        */
     int         traverses;        /* native turret variant discriminator */
     int         tracks;           /* ORDF 3/8/0x14 target link           */
     double      range_m;          /* published/family-gate range         */
@@ -470,9 +471,10 @@ typedef struct {
     int           tier;                /* GDFC +20; >=100 forces class 3   */
     int           ammo_capacity;       /* immutable GDFC +94 rate input    */
     double        projectile_speed;     /* GDFC +86 fallback/presentation   */
+    double        launch_spread;       /* GDFC +98, native degrees         */
     double        flight_speed;         /* ORDF +4 native ordnance speed    */
     int           ordnance_type;        /* ORDF +0 flight dispatcher        */
-    int           manager_type;        /* ORDF +12 AI decision branch      */
+    int           manager_type;        /* ORDF +12 legacy NPC selector      */
     int           traverses;           /* native turret variant discriminator*/
     int           deploy_kind;         /* CAR_DEPLOY_*; never projectile fire */
     char          ordnance_model[9];   /* OGEO authored model name             */

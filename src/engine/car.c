@@ -484,9 +484,10 @@ typedef struct {
     float    burst_rate;            /* GDFC +74: burst reload denominator */
     float    firing_rate;           /* GDFC +78: shots/s denominator    */
     float    projectile_speed;      /* GDFC +86, legacy/presentation    */
+    float    launch_spread;         /* GDFC +98 native launch degrees   */
     float    flight_speed;          /* ORDF +4, native ordnance m/s     */
     int32_t  ordnance_type;         /* ORDF +0 flight dispatcher        */
-    int32_t  manager_type;          /* ORDF +12 AI decision branch      */
+    int32_t  manager_type;          /* ORDF +12 legacy NPC selector      */
     uint32_t facing;
     uint32_t mesh_type;
     double   mount_frame[12];       /* HLOC, car-model space            */
@@ -1079,6 +1080,7 @@ static void gdf_read(CarWeapon *w)
             w->projectile_speed = rd_f32(p + 86);
             w->weapon_group     = rd_i32(p + 90);  /* fire-group id (M3E §3.3) */
             w->ammo             = rd_i32(p + 94);
+            w->launch_spread    = rd_f32(p + 98);
             copy_field(w->fire_sprite, sizeof w->fire_sprite, p + 102, 13);
             copy_field(w->sound, sizeof w->sound, p + 115, 13);
         } else if (tag_is(&c, "ORDF") && n >= 16) {
@@ -3228,6 +3230,7 @@ int car_combat_config(const char *vcf_name, CarCombatConfig *out)
                     parsed.tier = tier;
                     copy_field(parsed.name, sizeof parsed.name, p, 16);
                     parsed.ammo = (int)rd_i32(p + 94);
+                    parsed.launch_spread = (double)rd_f32(p + 98);
                     parsed.ammo_capacity = parsed.ammo;
                     parsed.cooldown_ticks =
                         weapon_cooldown_ticks(rd_f32(p + 78));
@@ -3349,6 +3352,7 @@ int car_weapon_get(int i, CarWeaponInfo *out)
                        w->mesh_type == 5)) || out->deploy_kind != CAR_DEPLOY_NONE;
     out->link_class = weapon_link_class((int)w->weapon_group);
     out->projectile_speed = (double)w->projectile_speed;
+    out->launch_spread = (double)w->launch_spread;
     out->flight_speed = w->flight_speed > 0.0f
                       ? (double)w->flight_speed
                       : (double)w->projectile_speed;
@@ -3553,6 +3557,7 @@ int car_gdf_weapon_info(const char *gdf_name, CarWeaponInfo *out)
         float   burst_rate;
         float   firing_rate;
         float   projectile_speed;
+        float   launch_spread;
         float   flight_speed;
         int32_t ordnance_type;
         int32_t manager_type;
@@ -3586,6 +3591,7 @@ int car_gdf_weapon_info(const char *gdf_name, CarWeaponInfo *out)
             q.projectile_speed = rd_f32(p + 86);
             q.weapon_group     = rd_i32(p + 90);
             q.ammo             = rd_i32(p + 94);
+            q.launch_spread    = rd_f32(p + 98);
             copy_field(q.sound, sizeof q.sound, p + 115, 13);
             found = 1;
         } else if (tag_is(&c, "ORDF") && c.total - 8 >= 16) {
@@ -3638,6 +3644,7 @@ int car_gdf_weapon_info(const char *gdf_name, CarWeaponInfo *out)
     out->turreted = q.tier >= 100;
     out->link_class = weapon_link_class((int)q.weapon_group);
     out->projectile_speed = (double)q.projectile_speed;
+    out->launch_spread = (double)q.launch_spread;
     out->flight_speed = q.flight_speed > 0.0f
                       ? (double)q.flight_speed
                       : (double)q.projectile_speed;

@@ -39,6 +39,7 @@
 #include "engine/raster.h"
 #include "engine/scene.h"
 #include "engine/car.h"
+#include "engine/component.h"
 #include "engine/paint.h"
 #include "engine/input.h"
 #include "engine/font.h"
@@ -4331,6 +4332,8 @@ const char *web_objective_state(void)
     return buf;
 }
 
+static int garage_json_escape(char *dst, size_t cap, const char *src);
+
 /*
  * Scripted-trip objective LINES as JSON — one entry per nav gate the
  * mission FSM is currently waiting on (mission_objective_lines), in
@@ -4393,6 +4396,16 @@ const char *web_objective_lines(void)
             "\"classification\":\"%s\",\"guidance\":%d}",
             i ? "," : "", p->x, p->z, p->r, p->sq,
             classes[p->consequence], p->guidance);
+    }
+    w += (size_t)snprintf(buf + w, sizeof buf - w, "],\"notes\":[");
+    for (int id = 1; id <= 6 && w + 600 < sizeof buf; id++) {
+        const MissionNote *note = mission_note(id);
+        if (!note) break;
+        char text[512];
+        garage_json_escape(text, sizeof text, note->text);
+        w += (size_t)snprintf(buf + w, sizeof buf - w,
+            "%s{\"id\":%d,\"flags\":%u,\"text\":\"%s\"}",
+            id > 1 ? "," : "", id, note->flags, text);
     }
     snprintf(buf + w, sizeof buf - w, "]}");
     return buf;
@@ -5169,7 +5182,13 @@ const char *web_garage_info(const char *vcf)
     char raw[32];
     garage_paint_name(raw, car_vtf_file());
     garage_json_escape(paint, sizeof paint, raw);
-    garage_json_escape(engine, sizeof engine, garage_component_name('e', ids[0]));
+    /* The VCFC engine dword is engsnd.dat's ENG NUM, not an NTBL row
+     * (engine-index-mapping.md); FUN_004532f0 maps it to the zero-based
+     * ENG COMP ID that names the installed engine. */
+    ComponentEngineCurve eng_curve;
+    uint32_t eng_row = component_engine_curve(ids[0], &eng_curve) == 0
+                     ? eng_curve.component_id + 1u : 0u;
+    garage_json_escape(engine, sizeof engine, garage_component_name('e', eng_row));
     garage_json_escape(susp, sizeof susp, garage_component_name('s', ids[1]));
     garage_json_escape(brake, sizeof brake, garage_component_name('b', ids[2]));
     for (int i = 0; i < 3; i++) {

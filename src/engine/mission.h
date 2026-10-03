@@ -294,6 +294,14 @@ typedef struct {
     int         sq;     /* 1 = square gate (isWithinSqNav)               */
 } MissionObjectiveLine;
 
+/* Native NPT table: six one-based objectives; flags 1 hidden, 2 succeeded,
+ * 4 failed. Text/status are read-only and live until mission unload. */
+typedef struct {
+    char text[256];
+    unsigned flags;
+} MissionNote;
+const MissionNote *mission_note(int objective_id);
+
 int mission_objective_lines(MissionObjectiveLine *out, int max);
 int mission_objective_reached_age(void);
 

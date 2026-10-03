@@ -25,7 +25,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import I76Web from './dist/i76web.mjs';
-import { p19EngagementTarget, p19EngagementSpeed, p19SteeringBand,
+import { p19EngagementTarget, p19SteeringBand,
          P19RoadRoute } from './p19_engagement.mjs';
 
 const APP = process.env.NITRO_APP;
@@ -469,8 +469,10 @@ function journey(lose) {
                   `wpn=${cbst.weapon}/${cbst.ammo}`);
     }
 
+    /* Hold the turning pace throughout the hunt: rushing the moving convoy
+     * spends the turret rack while chasing past its usable firing lanes. */
     if (phase === 'hunt')
-      targetSpeed = Math.min(targetSpeed, p19EngagementSpeed(diff));
+      targetSpeed = Math.min(targetSpeed, 18);
     if (Math.abs(diff) > 1.25) targetSpeed = Math.min(targetSpeed, 9);
     if (stopAt > 0 && dist < stopAt) targetSpeed = 0;
 

@@ -64,9 +64,6 @@ srcs_for() {
     raster_test|pixel_history_probe) echo "raster" ;;
     vfs_probe_log_test) echo "fs zfs vfs" ;;
     hud_probe)   echo "fs zfs vfs hud font m16 pcx vqm" ;;
-    # paperui pulls terrain bounds (map pin) + raster_rgb_to_index + pcx.
-    paper_probe) echo "fs zfs vfs paperui hud font m16 pcx vqm raster \
-            geomesh meshcache camera terrain scene pixidx paint texcache" ;;
     paint_probe) echo "fs zfs vfs paint" ;;
     tex_verify|tex_survey) echo "fs zfs vfs geomesh vqm pixidx" ;;
     pixidx_probe) echo "fs zfs vfs pixidx" ;;
@@ -92,13 +89,13 @@ srcs_for() {
     # multiple definition, not a duplicate-but-harmless object.
     fsm_dump|fsm_matrix|movie_probe|radio_probe|gate_probe|timer_probe)
       echo "fs zfs vfs geomesh meshcache camera terrain scene raster worldrender \
-            texcache vqm pixidx paint component car hud font m16 pcx sound strlookup save" ;;
+            texcache vqm pixidx paint component car hud font paperui m16 pcx sound strlookup save" ;;
     # adv_ctf_probe and adv_melee_probe unity-include mission.c ONLY -- they
     # read the built objective state (s_ctf, s_melee), which no header
     # exposes -- so mission.c is excluded here but fsm.c is still needed at
     # link. aiworld_probe does the same for the static world-contact stage
     # (ai_world_contacts_tick, s_world_boxes, ent_pos, mission_ent_writeback).
-    adv_ctf_probe|adv_melee_probe|av_melee_probe|aiworld_probe|ai_physics_parity|ally_proximity_probe|h077_diag_probe)
+    npc_aim_probe|adv_ctf_probe|adv_melee_probe|av_melee_probe|aiworld_probe|ai_physics_parity|ally_proximity_probe|h077_diag_probe)
       echo "fs zfs vfs geomesh meshcache camera terrain scene raster worldrender \
             texcache vqm pixidx paint fsm component car hud font m16 pcx sound \
             strlookup save" ;;
