@@ -307,6 +307,65 @@ static void draw_sky_tex(RTarget *t, const CameraView *camera, const RTex *sky)
     }
 }
 
+/* PORT DECISION: the 16-wall reading recommended by horizon-layer.md,
+ * radius 6000, height half a wall chord. Native's builder/iterator disagree.
+ * Keep the bottom at eye elevation until view+0x138's vertical-placement
+ * scale is decoded (tooling-roadmap.md, H-UAT-029 demand). Ray/prism
+ * intersection preserves planar UVs, fixed world yaw and the one-texel U
+ * inset; this backdrop never writes depth or receives world fog. */
+static void draw_horizon(RTarget *t, const CameraView *camera)
+{
+    const RTex *tiles[16];
+    for (int i = 0; i < 16; i++)
+        if (!scene_horizon_tex(i, &tiles[i])) return;
+    /* Outward wall normals at (slot + 0.5)*pi/8, (X,Z). Constants avoid
+     * native/Wasm libm differences at texture boundaries. */
+    static const double normals[16][2] = {
+        { .1950903220161283, .9807852804032304 },
+        { .5555702330196022, .8314696123025452 },
+        { .8314696123025452, .5555702330196022 },
+        { .9807852804032304, .1950903220161283 },
+        { .9807852804032304,-.1950903220161283 },
+        { .8314696123025452,-.5555702330196022 },
+        { .5555702330196022,-.8314696123025452 },
+        { .1950903220161283,-.9807852804032304 },
+        {-.1950903220161283,-.9807852804032304 },
+        {-.5555702330196022,-.8314696123025452 },
+        {-.8314696123025452,-.5555702330196022 },
+        {-.9807852804032304,-.1950903220161283 },
+        {-.9807852804032304, .1950903220161283 },
+        {-.8314696123025452, .5555702330196022 },
+        {-.5555702330196022, .8314696123025452 },
+        {-.1950903220161283, .9807852804032304 }
+    };
+    const double height = 1170.5419320967698; /* 6000*sin(pi/16) */
+    const double apothem = 5884.711682419382; /* 6000*cos(pi/16) */
+    for (int y = 0; y < t->h; y++) {
+        for (int x = 0; x < t->w; x++) {
+            double px = x - t->cx, py = t->cy - y;
+            double dx = t->f * camera->forward[0] + px * camera->right[0] + py * camera->up[0];
+            double dy = t->f * camera->forward[1] + px * camera->right[1] + py * camera->up[1];
+            double dz = t->f * camera->forward[2] + px * camera->right[2] + py * camera->up[2];
+            if (dy < 0 || (dx == 0 && dz == 0)) continue;
+            double az = sky_atan2(dx, dz);
+            if (az < 0) az += 2 * SKY_PI;
+            int slot = (int)(az * (8 / SKY_PI));
+            if (slot > 15) slot = 15;
+            const double *n = normals[slot];
+            double distance = apothem / (dx * n[0] + dz * n[1]);
+            double v = distance * dy / height;
+            if (v >= 1) continue;
+            double u = .5 + distance * (dx * n[1] - dz * n[0]) / (2 * height);
+            int tx = (int)floor(1 + 126 * u);
+            if (tx < 1) tx = 1;
+            if (tx > 127) tx = 127;
+            int ty = (int)floor(v * 128);
+            uint8_t index = tiles[slot]->texels[ty * 128 + tx];
+            if (index != 255) t->color[(size_t)y * t->w + x] = index;
+        }
+    }
+}
+
 static void draw_sky(RTarget *t, const CameraView *camera)
 {
     const RTex *sky = NULL;
@@ -349,6 +408,10 @@ static int render_filled(uint8_t *color, int w, int h,
         color, w, h, 0,
         scene_sky_name()[0] ? scene_sky_name() : "software-sky-gradient",
         "sky", "world", "background_pass");
+    draw_horizon(&t, camera);
+    raster_pixel_history_note_overlay(
+        color, w, h, 0, scene_horizon_name(),
+        "horizon", "world", "background_pass");
     if (have_terrain) terrain_render_filled_order(&t, camera, painter_order);
     if (have_scene) {
         if (painter_order) raster_painter_objects(&t, painter_order);

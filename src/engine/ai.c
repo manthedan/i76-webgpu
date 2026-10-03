@@ -2272,16 +2272,23 @@ static int follow_line_refused(const AiAgent *a, int ent, AiNavQueryFn query,
     return 0;
 }
 
-/* D-A24: 1 when the one-tick look-ahead is a native-style refuse —
+typedef enum {
+    AI_WHISKER_UNKNOWN = -1,
+    AI_WHISKER_CLEAR = 0,
+    AI_WHISKER_BLOCKED = 1
+} AiWhiskerState;
+
+/* D-A24: a measured one-tick look-ahead can be a native-style refuse —
  * occupied, or blocked while this agent's avoid flag is armed. Query
  * failure is unknown ground: do not invent a dodge. */
-static int whisker_blocked(const AiAgent *a, int ent, AiNavQueryFn query,
+static AiWhiskerState whisker_blocked(const AiAgent *a, int ent, AiNavQueryFn query,
                            double x0, double z0, double x1, double z1)
 {
     AiNavSample s;
     if (!query || query(ent, x0, z0, x1, z1, &s) != 0)
-        return 0;
-    return s.occupied || (a->avoid && s.blocked);
+        return AI_WHISKER_UNKNOWN;
+    return s.occupied || (a->avoid && s.blocked)
+         ? AI_WHISKER_BLOCKED : AI_WHISKER_CLEAR;
 }
 
 /* D-A24: combat-follow only. Forward-clear desired headings are returned
@@ -2299,8 +2306,8 @@ static double whisker_desired(AiAgent *a, int ent, AiNavQueryFn query,
     look = AI_WHISKER_RANGE;
     hx = -sin(desired);
     hz = cos(desired);
-    if (!whisker_blocked(a, ent, query, a->x, a->z,
-                         a->x + hx * look, a->z + hz * look))
+    if (whisker_blocked(a, ent, query, a->x, a->z,
+                        a->x + hx * look, a->z + hz * look) != AI_WHISKER_BLOCKED)
         return desired;
     /* Target line is blocked: keep turning (native holds e0) by the
      * smallest steer whose look-ahead from the live heading is clear.
@@ -2318,8 +2325,8 @@ static double whisker_desired(AiAgent *a, int ent, AiNavQueryFn query,
             double cand = ang_wrap(a->heading + (double)sign * mag * turn);
             double cx = -sin(cand), cz = cos(cand);
             if (mag < best_mag &&
-                !whisker_blocked(a, ent, query, a->x, a->z,
-                                 a->x + cx * look, a->z + cz * look)) {
+                whisker_blocked(a, ent, query, a->x, a->z,
+                                a->x + cx * look, a->z + cz * look) == AI_WHISKER_CLEAR) {
                 best_mag = mag;
                 best_sign = sign;
                 best = cand;
@@ -2885,7 +2892,7 @@ void ai_tick(double dt, void (*resolve)(int ent, double out[3]),
                         double hz = cos(a->heading);
                         if (whisker_blocked(a, i, query, a->x, a->z,
                                             a->x + hx * AI_WHISKER_RANGE,
-                                            a->z + hz * AI_WHISKER_RANGE))
+                                            a->z + hz * AI_WHISKER_RANGE) == AI_WHISKER_BLOCKED)
                             motion = 17;
                     }
                 }

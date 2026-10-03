@@ -364,10 +364,15 @@ function journey(lose) {
                   `ammo=${combat.ammo} visible=[${visible}]`);
     }
 
+    /* The turret aims independently: firing must not freeze chassis steering
+     * or braking. A wider neutral band avoids opposite-turn chatter while
+     * following a moving target. Keep the zero-fire LOSS control unchanged. */
+    const turretDrive = !lose && weaponMode === 'turret';
+    const steerBand = turretDrive ? 0.10 : 0.012;
     setKey('up', pose.speed < targetSpeed - 1);
-    setKey('brake', pose.speed > targetSpeed + 1 && !aim);
-    setKey('left', !aim && diff > 0.012);
-    setKey('right', !aim && diff < -0.012);
+    setKey('brake', pose.speed > targetSpeed + 1 && (!aim || turretDrive));
+    setKey('left', (!aim || turretDrive) && diff > steerBand);
+    setKey('right', (!aim || turretDrive) && diff < -steerBand);
     setKey('fire', aim);
     M._web_drive_step();
   }

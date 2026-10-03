@@ -463,6 +463,7 @@ static char          s_mission[112];
 
 static FsmImage     *s_img;
 static FsmMachine  **s_machines;
+static FsmMachine   *s_guidance_machine;
 static int           s_n_machines;
 static int           s_machines_alive;
 
@@ -486,30 +487,24 @@ static uint64_t      s_script_snap_tick = UINT64_MAX;
 static int           s_user_snap_pending;
 static double        s_user_snap_speed;
 
-/* PORT GUIDANCE nav goal (mission_nav_goal): the gate the script is
- * waiting on the USER to reach, captured from the first unsatisfied
- * isWithinNav/isWithinSqNav evaluated for the user entity this tick.
- * Cleared at the top of every mission_tick — a stale goal is never
- * reported, and satisfied or non-user gates are never recorded. */
-static double        s_nav_x, s_nav_z, s_nav_r;
-static int           s_nav_sq;
-static int           s_nav_have;
-
 /* PORT GUIDANCE objective lines (mission_objective_lines): unlike the
- * one-tick candidate above, these survive the FSM's machine round-robin.
+ * one-tick nav goal, these survive the FSM's machine round-robin.
  * Every polled-and-unsatisfied isWithinNav/isWithinSqNav gate is tracked
- * by (path, entity) and stays a live line while the script keeps polling
- * it; a line whose gate goes unpolled for the TTL dies silently, and a
+ * by (machine, predicate site) and stays live while the script polls it; a line whose gate goes unpolled for the TTL dies silently, and a
  * USER gate that is genuinely satisfied records the reached tick
  * (H-UAT-014). Both bounds are port INVENTIONS (display capacity and
  * "still live" horizon; the original has no trip objective HUD at all). */
-#define MISSION_NAVOBJ_MAX 6    /* simultaneous objective lines          */
+#define MISSION_NAVOBJ_MAX 128  /* live predicate audit capacity          */
 #define MISSION_NAVOBJ_TTL 30   /* ticks unpolled before a line dies     */
 
 typedef struct {
     int      used;
-    int      path;              /* FSM path index (key)                  */
-    int      ent;               /* gated entity (key)                    */
+    const FsmMachine *machine;
+    uint32_t pc;
+    int poll_order;
+    FsmNavConsequence consequence;
+    int      path;              /* current FSM path index                  */
+    int      ent;               /* current gated entity                    */
     double   x, z, r;
     int      sq;
     uint64_t seen;              /* last unsatisfied poll tick            */
@@ -517,6 +512,7 @@ typedef struct {
 } MissionNavObj;
 
 static MissionNavObj s_navobj[MISSION_NAVOBJ_MAX];
+static int s_nav_poll_order;
 static uint64_t      s_navobj_reached_tick;
 static int           s_navobj_reached_have;
 
@@ -951,7 +947,7 @@ static int vehicle_player_contact(double px, double pz, double radius,
  * the zero-restitution normal impulse symmetrically (D-A11); tangential
  * velocity is unchanged.
  */
-static void vehicle_contacts_tick(void)
+static void vehicle_contacts_tick(int camera_owned_tick)
 {
     MissionVehicleBody bodies[AI_MAX_AGENTS];
     int nb = 0;
@@ -985,11 +981,12 @@ static void vehicle_contacts_tick(void)
             ai_world_velocity(ent, &b->vx, &b->vz);
     }
 
-    /* web_drive_step applies the scripted user target only while the mission
-     * camera owns the frame. Outside that window the physical car is
-     * authoritative even if a background mover goal has not yet been sat. */
-    int script_owns_player = mission_cam_active() &&
-                             ai_goal(s_user_ent) != AI_GOAL_NONE;
+    /* The host has not applied this tick's scripted placement yet. Never
+     * mix its destination XZ with the old physical car's contact callbacks,
+     * including the tick that pops the camera or teleports without one. */
+    int script_owns_player = s_user_snap_pending ||
+                            ((camera_owned_tick || mission_cam_active()) &&
+                             ai_goal(s_user_ent) != AI_GOAL_NONE);
     int physical_player = s_user_ent >= 0 && s_car_set &&
                           !script_owns_player && s_vehicle_radius &&
                           s_vehicle_height && s_vehicle_separate;
@@ -1106,6 +1103,18 @@ static void vehicle_contacts_tick(void)
             continue;
         mission_ent_ground_pose(b->ent, p);
         scene_obj_set_pos(b->scene_obj, p);
+        if (!ai_physical_active(b->ent)) {
+            /* The shove changed the terrain under the transformed hull.
+             * Restore exact support without changing its chosen facing. */
+            double low, high;
+            if (scene_obj_ground_gaps(b->scene_obj, terrain_height_at,
+                                      &low, &high) == 0) {
+                p[1] -= low;
+                s_ents[b->ent].ai_y = p[1];
+                ai_set_height(b->ent, p[1]);
+                scene_obj_set_pos(b->scene_obj, p);
+            }
+        }
         s_ents[b->ent].prev_x = p[0];
         s_ents[b->ent].prev_z = p[2];
         s_ents[b->ent].have_prev = 1;
@@ -2706,7 +2715,7 @@ static void melee_world_tick(void)
         mission_ent_writeback(b->ent, b->scene_obj, p);
     }
 
-    vehicle_contacts_tick();
+    vehicle_contacts_tick(0);
 
     combat_tick();
 }
@@ -3013,16 +3022,7 @@ static void scripted_car_update(void)
         double dx = p[0] - s_script_pos[0];
         double dz = p[2] - s_script_pos[2];
         double d = sqrt(dx * dx + dz * dz);
-        if (s_user_snap_pending) {
-            /* An authored teleport is a pose change, not one tick of
-             * velocity. Preserve its speed operand for the physical host;
-             * distance/dt would launch B01's car at ~18 km/s. */
-            s_script_speed = s_user_snap_speed;
-            s_script_snap_tick = s_tick;
-            s_user_snap_pending = 0;
-        } else {
-            s_script_speed = d / AI_TICK_DT;
-        }
+        s_script_speed = d / AI_TICK_DT;
         if (d > 1e-9 || ai_goal(s_user_ent) != AI_GOAL_NONE)
             s_script_yaw = ai_get_heading(s_user_ent);
     } else {
@@ -3030,6 +3030,14 @@ static void scripted_car_update(void)
         s_script_yaw = (o && o->has_yaw) ? o->yaw : s_car_yaw;
         s_script_speed = 0.0;
         s_script_have = 1;
+    }
+    if (s_user_snap_pending) {
+        /* A teleport is placement, not displacement/dt. This also applies
+         * to the first sample and to a zero-speed snap followed by sit. */
+        s_script_speed = s_user_snap_speed;
+        s_script_yaw = ai_get_heading(s_user_ent);
+        s_script_snap_tick = s_tick;
+        s_user_snap_pending = 0;
     }
     s_script_pos[0] = p[0];
     s_script_pos[1] = p[1];
@@ -3136,14 +3144,16 @@ static int navobj_fresh(const MissionNavObj *o)
     return o->used && s_tick - o->seen <= MISSION_NAVOBJ_TTL;
 }
 
-/* Record/refresh the (path, entity) gate as a live objective line. */
+/* Record each predicate site: one anchor can have different consequences. */
 static void navobj_touch(int path, int ent, const double pn[2], double r,
-                         int sq)
+                         int sq, FsmNavConsequence consequence)
 {
     MissionNavObj *slot = NULL, *reuse = NULL;
+    int new_site = 0;
     for (int i = 0; i < MISSION_NAVOBJ_MAX; i++) {
         MissionNavObj *o = &s_navobj[i];
-        if (o->used && o->path == path && o->ent == ent) {
+        if (o->used && o->machine == s_guidance_machine &&
+            o->pc == fsm_machine_pc(s_guidance_machine)) {
             slot = o;
             break;
         }
@@ -3154,27 +3164,39 @@ static void navobj_touch(int path, int ent, const double pn[2], double r,
         slot = reuse;
         if (!slot)
             return;             /* bounded: display slots exhausted      */
+        new_site = 1;
         slot->used = 1;
-        slot->path = path;
-        slot->ent  = ent;
+        slot->machine = s_guidance_machine;
+        slot->pc = fsm_machine_pc(s_guidance_machine);
         slot->born = s_tick;
     }
+    if (slot->path != path || slot->ent != ent)
+        slot->born = s_tick;
+    slot->path = path;
+    slot->ent = ent;
+    slot->consequence = consequence;
     slot->x = pn[0];
     slot->z = pn[1];
     slot->r = r;
     slot->sq = sq;
+    if (new_site || slot->seen != s_tick)
+        slot->poll_order = s_nav_poll_order++;
     slot->seen = s_tick;
 }
 
 /* A gate the script polls as satisfied stops being a line. Returns 1
  * when the line existed and was still fresh — the "genuinely reached"
  * edge, as opposed to a first poll that was already within range. */
-static int navobj_satisfy(int path, int ent)
+static int navobj_danger(double x, double z);
+
+static int navobj_satisfy(void)
 {
     for (int i = 0; i < MISSION_NAVOBJ_MAX; i++) {
         MissionNavObj *o = &s_navobj[i];
-        if (o->used && o->path == path && o->ent == ent) {
-            int fresh = navobj_fresh(o);
+        if (o->used && o->machine == s_guidance_machine &&
+            o->pc == fsm_machine_pc(s_guidance_machine)) {
+            int fresh = navobj_fresh(o) && o->consequence == FSM_NAV_PROGRESS &&
+                        !navobj_danger(o->x, o->z);
             o->used = 0;
             return fresh;
         }
@@ -3242,6 +3264,25 @@ static int arg_ent(int32_t **args, int i, int nargs, const char *name)
         return -1;
     }
     return mission_ent_owner((int)v);
+}
+
+/* Snapshot-only conjunctions: before lookahead effects, other entities
+ * keep their current pose and the user is at the proposed destination. */
+static int navobj_query(void *ud, const char *name, int32_t **args, int nargs)
+{
+    const double *arrival = ud;
+    if ((!strcmp(name, "isWithinNav") || !strcmp(name, "isWithinSqNav")) &&
+        nargs == 3 && *args[1] >= 0 && *args[1] < s_nents) {
+        double pn[2], pe[3];
+        if (path_node0(*args[0], pn) != 0) return -1;
+        int ent = mission_ent_owner(*args[1]);
+        ent_pos(ent, pe);
+        if (ent == s_user_ent) { pe[0] = arrival[0]; pe[2] = arrival[1]; }
+        double dx = pe[0] - pn[0], dz = pe[2] - pn[1], r = *args[2];
+        return name[8] == 'S' ? (fabs(dx) < r && fabs(dz) < r)
+                             : (dx * dx + dz * dz < r * r);
+    }
+    return -1;
 }
 
 /* --- cutscene camera (D18) --------------------------------------------- */
@@ -3679,30 +3720,18 @@ static int32_t mission_dispatch(void *ud, int action_index,
         double r = (double)*args[2];
         int within = sq ? (fabs(dx) < r && fabs(dz) < r)
                         : (dx * dx + dz * dz < r * r);
-        /* PORT GUIDANCE capture: the first UNSATISFIED gate this tick
-         * whose entity is the user is the point the script is waiting on
-         * the player to reach — the only scripted-trip objective that is
-         * derivable from mission state (mission_nav_goal). Satisfied
-         * gates and other entities' gates are not the player's cue. */
-        if (!within && e == s_user_ent && !s_nav_have) {
-            s_nav_x = pn[0]; s_nav_z = pn[1]; s_nav_r = r;
-            s_nav_sq = sq;
-            s_nav_have = 1;
-        }
-        /* Persistent objective lines (mission_objective_lines): the
-         * one-tick candidate above flips targets when two machines poll
-         * different gates on alternating round-robin ticks (H-UAT-014).
-         * Track every polled-unsatisfied gate instead; the genuine
-         * satisfaction of a USER gate while the mission still runs is
-         * the only "objective reached" edge the HUD may toast on. */
-        if (e >= 0) {
-            if (!within)
-                navobj_touch((int)path_i, e, pn, r, sq);
-            else if (navobj_satisfy((int)path_i, e) && e == s_user_ent &&
-                     s_state == MISSION_RUNNING) {
-                s_navobj_reached_tick = s_tick;
-                s_navobj_reached_have = 1;
-            }
+        /* PORT GUIDANCE: only arrival branches known to advance the
+         * script are destinations. Warning/failure and unknown branches
+         * remain available to diagnostics but never feed the HUD. */
+        FsmNavConsequence consequence = e == s_user_ent
+            ? fsm_machine_nav_consequence(s_guidance_machine, navobj_query, pn)
+            : FSM_NAV_PROGRESS;
+        if (!within)
+            navobj_touch((int)path_i, e, pn, r, sq, consequence);
+        else if (navobj_satisfy() && e == s_user_ent &&
+                 consequence == FSM_NAV_PROGRESS && s_state == MISSION_RUNNING) {
+            s_navobj_reached_tick = s_tick;
+            s_navobj_reached_have = 1;
         }
         return within;
     }
@@ -3803,9 +3832,10 @@ static int32_t mission_dispatch(void *ud, int action_index,
     }
     if ((!strcmp(name, "teleport") && nargs == 4) ||
         (!strcmp(name, "teleportOffset") && nargs == 6)) {
-        /* (ent, path, speed, height[, dx, dz]) — snap to path node 0 at
-         * terrain + height×0.01 and start path-following (FACT fsm.md
-         * §4.2). dx/dz use the same ÷100 offset convention (DECISION). */
+        /* PORT DECISION: retain the legacy fourth-operand height and route
+         * continuation here. Native uses a heading angle; that broader motion
+         * correction is separate from placement ordering (teleport-order.md).
+         * dx/dz are the native teleportOffset deltas scaled by 0.01. */
         int e = arg_ent(args, 0, nargs, name);
         const float *pts = NULL;
         int n = fsm_image_path(s_img, (int)*args[1], &pts);
@@ -3824,6 +3854,12 @@ static int32_t mission_dispatch(void *ud, int action_index,
                 ai_teleport(e, (int)*args[1], pts, n, (double)*args[2],
                             y, dx, dz);
                 if (s_ents[e].is_user) {
+                    /* Native teleport writes the same transform later FSM
+                     * predicates read (FUN_00406120 / FUN_00417fb0). Publish
+                     * placement now; the host still consumes the snap below. */
+                    mission_set_car((double)pts[0] + dx,
+                                    (double)pts[2] + dz, ai_get_heading(e));
+                    s_car_vx = s_car_vz = 0.0;
                     s_user_snap_pending = 1;
                     s_user_snap_speed = *args[2] > 0 ?
                                         (double)*args[2] : 0.0;
@@ -4213,7 +4249,6 @@ static void mission_runner_reset(void)
     s_script_snap_tick = UINT64_MAX;
     s_user_snap_pending = 0;
     s_user_snap_speed = 0.0;
-    s_nav_have = 0;
     memset(s_navobj, 0, sizeof s_navobj);
     s_navobj_reached_tick = 0;
     s_navobj_reached_have = 0;
@@ -4488,6 +4523,11 @@ int mission_scripted_car(double pos[3], double *yaw, double *speed)
     return 1;
 }
 
+int mission_user_teleported(void)
+{
+    return s_loaded && s_script_snap_tick == s_tick;
+}
+
 void mission_tick(void)
 {
     if (!s_loaded)
@@ -4499,10 +4539,6 @@ void mission_tick(void)
      * skips the queued Smacker clip and acknowledges it. */
     if (s_movie_pending)
         return;
-
-    /* The nav-goal candidate lives exactly one tick: a gate the script
-     * stops polling (or now satisfies) must stop being the player's cue. */
-    s_nav_have = 0;
 
     /* FSM-less: the objective controller is the whole tick (D-O1). The
      * tick counter advances here too — it used to stay at 0 for 55 of the
@@ -4521,7 +4557,9 @@ void mission_tick(void)
         return;
     }
 
+    int camera_owned_tick = mission_cam_active();
     s_tick++;
+    s_nav_poll_order = 0;
     cb_tick();
 
     /* Round-robin: one bounded slice per live machine (fsm.md §2.4).
@@ -4531,7 +4569,9 @@ void mission_tick(void)
         FsmMachine *m = s_machines[i];
         if (!m || fsm_machine_halted(m))
             continue;
+        s_guidance_machine = m;
         FsmStepResult r = fsm_step(m);
+        s_guidance_machine = NULL;
         if (r == FSM_STEP_RST || r == FSM_STEP_TRAPPED) {
             s_machines_alive--;
             fprintf(stdout, "[mission] machine %d %s (tick %llu)\n", i,
@@ -4555,7 +4595,7 @@ void mission_tick(void)
         if (ai_get_pos(i, p) == 0)
             mission_ent_writeback(i, s_ents[i].scene_obj, p);
     }
-    vehicle_contacts_tick();
+    vehicle_contacts_tick(camera_owned_tick);
     scripted_car_update();
 
 
@@ -4571,12 +4611,63 @@ void mission_tick(void)
 
 int mission_nav_goal(double out_xz[2], double *radius, int *square)
 {
-    if (!s_loaded || !s_nav_have)
-        return 0;
-    if (out_xz) { out_xz[0] = s_nav_x; out_xz[1] = s_nav_z; }
-    if (radius) *radius = s_nav_r;
-    if (square) *square = s_nav_sq;
+    if (!s_loaded) return 0;
+    const MissionNavObj *first = NULL;
+    int first_order = INT_MAX;
+    for (int i = 0; i < MISSION_NAVOBJ_MAX; i++) {
+        const MissionNavObj *o = &s_navobj[i];
+        if (!o->used || o->seen != s_tick || o->ent != s_user_ent ||
+            o->consequence != FSM_NAV_PROGRESS || navobj_danger(o->x, o->z))
+            continue;
+        /* Several machines can wait on the same destination: one may
+         * have an unresolved extra condition while another already proves
+         * progress. Keep that destination's original polling priority. */
+        int order = o->poll_order;
+        for (int k = 0; k < MISSION_NAVOBJ_MAX; k++) {
+            const MissionNavObj *p = &s_navobj[k];
+            if (p->used && p->seen == s_tick && p->ent == s_user_ent &&
+                p->x == o->x && p->z == o->z && p->poll_order < order)
+                order = p->poll_order;
+        }
+        if (order < first_order) { first = o; first_order = order; }
+    }
+    if (!first) return 0;
+    if (out_xz) { out_xz[0] = first->x; out_xz[1] = first->z; }
+    if (radius) *radius = first->r;
+    if (square) *square = first->sq;
     return 1;
+}
+
+/* A progress trigger may share an anchor with another machine's exit
+ * boundary. Do not direct the user inside a known live failure region. */
+static int navobj_danger(double x, double z)
+{
+    for (int i = 0; i < MISSION_NAVOBJ_MAX; i++) {
+        const MissionNavObj *o = &s_navobj[i];
+        if (!navobj_fresh(o) || o->ent != s_user_ent ||
+            o->consequence != FSM_NAV_FAILURE) continue;
+        double dx = x - o->x, dz = z - o->z;
+        if (o->sq ? (fabs(dx) < o->r && fabs(dz) < o->r)
+                  : (dx * dx + dz * dz < o->r * o->r)) return 1;
+    }
+    return 0;
+}
+
+int mission_nav_predicates(MissionNavPredicate *out, int max)
+{
+    int n = 0;
+    if (!out || max <= 0 || !s_loaded) return 0;
+    for (int i = 0; i < MISSION_NAVOBJ_MAX && n < max; i++) {
+        const MissionNavObj *o = &s_navobj[i];
+        if (!navobj_fresh(o) || o->ent != s_user_ent) continue;
+        out[n].x = o->x; out[n].z = o->z; out[n].r = o->r;
+        out[n].sq = o->sq;
+        out[n].consequence = (int)o->consequence;
+        out[n].guidance = o->consequence == FSM_NAV_PROGRESS &&
+                          !navobj_danger(o->x, o->z);
+        n++;
+    }
+    return n;
 }
 
 int mission_objective_lines(MissionObjectiveLine *out, int max)
@@ -4590,7 +4681,8 @@ int mission_objective_lines(MissionObjectiveLine *out, int max)
     int nlive = 0;
     for (int i = 0; i < MISSION_NAVOBJ_MAX; i++) {
         const MissionNavObj *o = &s_navobj[i];
-        if (!navobj_fresh(o))
+        if (!navobj_fresh(o) || o->consequence != FSM_NAV_PROGRESS ||
+            (o->ent == s_user_ent && navobj_danger(o->x, o->z)))
             continue;
         int j = nlive++;
         while (j > 0 && live[j - 1]->born > o->born) {
@@ -4625,6 +4717,11 @@ int mission_objective_lines(MissionObjectiveLine *out, int max)
             out[n].x = p[0];
             out[n].z = p[2];
         } else {
+            int dup = 0;
+            for (int k = 0; k < n; k++)
+                if (out[k].user && out[k].x == o->x && out[k].z == o->z)
+                    dup = 1;
+            if (dup) continue;
             out[n].x = o->x;
             out[n].z = o->z;
         }
@@ -4892,6 +4989,12 @@ int mission_scene_object_is_vehicle(int scene_obj)
         if (s_ents[ent].scene_obj == scene_obj && mission_ent_is_vehicle(ent))
             return 1;
     return 0;
+}
+
+int mission_entity_scene_object(int ent)
+{
+    ent = mission_ent_owner(ent);
+    return s_loaded && ent >= 0 ? s_ents[ent].scene_obj : -1;
 }
 
 int mission_scene_object_is_player_vehicle(int scene_obj)

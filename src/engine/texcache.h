@@ -13,6 +13,7 @@
  *   vehicle panels    "V1 FT LF.MAP" → paint_resolve_face ──→ <stem>.vqm
  *   direct table      "XOS1_101.TMT" → descriptor frame ────→ .vqm or .map
  *
+ * Direct faces fall back to the raw .map sheet when no VQM resolves (ZBKS_).
  * Ordinary static/vehicle tiles use the m-tier index. A direct TMT may instead
  * own a sibling PIX/PAK family; its exact package has precedence.
  *

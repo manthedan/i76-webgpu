@@ -557,6 +557,22 @@ int main(int argc, char **argv)
           dash1_tile->w == 256 && dash1_tile->h == 128 &&
           dash2_tile->w == 256 && dash2_tile->h == 128,
           "ZDASH101/102 resolve from authored cockpit package");
+    check(strcmp(texcache_tile_name(dash_tex1), "zdash101.vqm") == 0 &&
+          strcmp(texcache_tile_name(dash_tex2), "zdash102.vqm") == 0,
+          "cockpit VQM tiles retain precedence over raw MAP sheets");
+
+    /* DR51SPC6 has no VQM twin. Losing its raw sheet paints a grey block
+     * over the bottom-right dashboard instead of the authored black panel. */
+    uint16_t specials_id = texcache_resolve("ZBKS_.MAP", car_vtf_file());
+    const TexTile *specials = texcache_tile(specials_id);
+    size_t specials_size = 0;
+    uint8_t *specials_raw = vfs_read_file("zbks_.map", &specials_size);
+    check(specials && specials->w == 256 && specials->h == 128 &&
+          specials->has_key && specials_raw && specials_size == 8 + 256 * 128 &&
+          strcmp(texcache_tile_name(specials_id), "zbks_.map") == 0 &&
+          memcmp(specials->texels, specials_raw + 8, 256 * 128) == 0,
+          "SPC6 resolves the exact authored raw MAP, including black texels");
+    vfs_free(specials_raw);
 
     /* H-UAT-075a regression: MOILSPIL's face names a TMT descriptor, not a
      * MAP alias. Its eight 64x64 indexed frames live in the descriptor's own

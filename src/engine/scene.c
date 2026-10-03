@@ -60,6 +60,7 @@
 #include "scene.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -468,6 +469,8 @@ typedef struct {
     int      label_id;
     uint32_t class_id;
     uint32_t sdf_class; /* SDFC +16; native drivable registrar class word */
+    int      has_sdf_health;
+    int      sdf_hp, sdf_hp_max; /* non-FSM scenery pool; FSM pools live in combat */
     uint16_t flags;
     uint16_t team;
     int      hidden;    /* M7 combat/story visibility (additive; 0=shown) */
@@ -518,6 +521,50 @@ static char     s_sky_name[16];
 static RTex     s_sky;
 static uint8_t *s_sky_pixels;
 static int      s_sky_ok;
+
+static char     s_horizon_name[16];
+static RTex     s_horizon[16];
+static uint8_t *s_horizon_pixels[16];
+static int      s_horizon_ok;
+static int      s_horizon_enabled = 1;
+
+static void horizon_clear(void)
+{
+    for (int i = 0; i < 16; i++) {
+        free(s_horizon_pixels[i]);
+        s_horizon_pixels[i] = NULL;
+    }
+    memset(s_horizon, 0, sizeof s_horizon);
+    s_horizon_ok = 0;
+}
+
+/* FUN_00430110: all sixteen tokens must resolve before the layer is ready.
+ * Missing .hzd is legal (e.g. T04). Bound reads also reject truncated lists. */
+static void horizon_load(void)
+{
+    size_t len = 0, off = 0;
+    uint8_t *buf = vfs_read_file(s_horizon_name, &len);
+    if (!buf) return;
+    for (int i = 0; i < 16; i++) {
+        while (off < len && buf[off] && strchr(" ,\t\r\n", buf[off])) off++;
+        size_t start = off;
+        while (off < len && buf[off] && !strchr(" ,\t\r\n", buf[off])) off++;
+        size_t n = off - start;
+        char name[16];
+        if (!n || n >= sizeof name) goto fail;
+        memcpy(name, buf + start, n);
+        name[n] = '\0';
+        if (texcache_load_map(name, &s_horizon[i], &s_horizon_pixels[i]) != 0 ||
+            s_horizon[i].w != 128 || s_horizon[i].h != 128) goto fail;
+    }
+    s_horizon_ok = 1;
+    vfs_free(buf);
+    return;
+fail:
+    vfs_free(buf);
+    horizon_clear();
+}
+
 
 /* Mission shade/translucency tables (WDEF/WRLD +43/+56; scene.md §2,
  * CONFIRMED layout — the same fields nitro.exe's FUN_004b45f0 reads at
@@ -597,10 +644,23 @@ static void wrld_assets_load(const uint8_t *wdef, size_t len)
                     s_sky_ok = texcache_load_map(s_sky_name, &s_sky,
                                                  &s_sky_pixels) == 0;
             }
+            if (plen >= 134 + 13) {
+                wrld_field(p + 134, s_horizon_name);
+                if (s_horizon_name[0]) horizon_load();
+            }
             return;
         }
         off = c.next;
     }
+}
+
+const char *scene_horizon_name(void) { return s_horizon_name; }
+void scene_horizon_enable(int enabled) { s_horizon_enabled = !!enabled; }
+int scene_horizon_tex(int slot, const RTex **out)
+{
+    if (!s_horizon_ok || !s_horizon_enabled || slot < 0 || slot >= 16) return 0;
+    if (out) *out = &s_horizon[slot];
+    return 1;
 }
 
 const char *scene_sky_name(void) { return s_sky_name; }
@@ -739,6 +799,12 @@ static void build_static(SceneObj *o)
         if (!chunk_at(buf, sz, off, &c)) break;
         if (tag_is(&c, "SDFC") && c.total - 8 >= 20) {
             o->sdf_class = rd_u32(buf + c.payload + 16);
+            if (c.total - 8 >= 44) {
+                /* scene.md §6.6: name16, class4, size12, unknown8, health4. */
+                uint32_t hp = rd_u32(buf + c.payload + 40);
+                o->has_sdf_health = 1;
+                o->sdf_hp = o->sdf_hp_max = hp > INT_MAX ? INT_MAX : (int)hp;
+            }
         } else if (tag_is(&c, "SGEO") && !built) {
             const uint8_t *p = buf + c.payload;
             size_t avail = c.total - 8;
@@ -3116,6 +3182,28 @@ int scene_obj_class_id(int obj)
     return obj >= 0 && obj < s_nobj ? (int)s_objs[obj].class_id : -1;
 }
 
+int scene_obj_hp(int obj, int maximum)
+{
+    if (obj < 0 || obj >= s_nobj || !s_objs[obj].has_sdf_health)
+        return -1;
+    return maximum ? s_objs[obj].sdf_hp_max : s_objs[obj].sdf_hp;
+}
+
+int scene_obj_damage(int obj, int damage)
+{
+    int hp = scene_obj_hp(obj, 0);
+    if (hp < 0 || damage <= 0 || s_objs[obj].hidden)
+        return hp;
+    /* PORT DECISION: authored zero is inert, never a 100-HP fallback.
+     * Native special-class/sentinel rules await H-UAT-030's RE demand row. */
+    if (s_objs[obj].sdf_hp_max == 0)
+        return hp;
+    s_objs[obj].sdf_hp = damage >= hp ? 0 : hp - damage;
+    if (s_objs[obj].sdf_hp == 0)
+        scene_obj_set_hidden(obj, 1);
+    return s_objs[obj].sdf_hp;
+}
+
 int scene_obj_is_vehicle_mesh(int obj)
 {
     return obj >= 0 && obj < s_nobj && s_objs[obj].class_id == 1 &&
@@ -3551,6 +3639,8 @@ void scene_unload(void)
     memset(&s_sky, 0, sizeof s_sky);
     s_sky_name[0] = '\0';
     s_sky_ok = 0;
+    horizon_clear();
+    s_horizon_name[0] = '\0';
 
     /* The .lum/.tbl buffers themselves are static and simply stop being
      * handed out; the generation bump is what tells the renderer's sync

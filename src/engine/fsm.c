@@ -543,7 +543,7 @@ static bool fsm_jump(FsmMachine *m, int32_t target)
     return true;
 }
 
-FsmStepResult fsm_step(FsmMachine *m)
+static FsmStepResult fsm_run(FsmMachine *m, int one_action)
 {
     FsmImage *img;
 
@@ -775,6 +775,8 @@ FsmStepResult fsm_step(FsmMachine *m)
                                       img->action_names[in.arg],
                                       m->as, m->as_count);
             m->as_count = 0;    /* AS is reset after every ACTION (§2.2) */
+            if (one_action)
+                return FSM_STEP_YIELD;
             break;
         }
 
@@ -793,4 +795,196 @@ FsmStepResult fsm_step(FsmMachine *m)
         if (m->slice_count >= FSM_WATCHDOG_HARD)
             return FSM_STEP_WATCHDOG;
     }
+}
+
+FsmStepResult fsm_step(FsmMachine *m)
+{
+    return fsm_run(m, 0);
+}
+
+/* PORT DECISION: bounded, side-effect-free lookahead for the port's HUD.
+ * Resume the actual frame with arrival true, including shared-cell values.
+ * Radio/timer waits may finish and nested radii of this same destination
+ * may be entered. A different world predicate ends this causal segment;
+ * we cannot predict combat or another destination from this arrival.
+ * Unknown verbs, loops and exhausted budgets never become guidance. */
+typedef struct {
+    int path, ent, effect, stop;
+    int variant, stride, variants;
+    FsmNavConsequence result;
+    FsmNavQuery query;
+    void *ud;
+    FsmMachine *machine;
+    uint32_t origin_pc, wait_pc;
+} NavLookahead;
+
+static int32_t nav_lookahead_action(void *ud, int index, const char *name,
+                                   int32_t **args, int nargs)
+{
+    NavLookahead *a = ud;
+    (void)index;
+    if (!strcmp(name, "failAllObj") || !strcmp(name, "failObj") ||
+        !strcmp(name, "failAll") || !strcmp(name, "fail")) {
+        a->stop = 1;
+        a->result = FSM_NAV_FAILURE;
+        return 0;
+    }
+    if (!strcmp(name, "successAll") || !strcmp(name, "successObj") ||
+        !strcmp(name, "success")) {
+        a->stop = 1;
+        a->result = FSM_NAV_PROGRESS;
+        return 0;
+    }
+    if (!strcmp(name, "true")) return 1;
+    if (!strcmp(name, "false") || !strcmp(name, "null")) return 0;
+    if (!strcmp(name, "set") && nargs == 2) {
+        *args[0] = *args[1]; a->effect = 1; return 0;
+    }
+    if ((!strcmp(name, "inc") || !strcmp(name, "dec")) && nargs == 1) {
+        *args[0] = (int32_t)((uint32_t)*args[0] +
+                           (!strcmp(name, "inc") ? 1u : UINT32_MAX));
+        a->effect = 1; return 0;
+    }
+    if (!strcmp(name, "rand") && nargs == 2 && *args[1] > 0 &&
+        *args[1] <= 32 / a->stride) {
+        int choices = *args[1];
+        *args[0] = (a->variant / a->stride) % choices;
+        a->stride *= choices;
+        a->variants = a->stride;
+        return 0;
+    }
+    if (!strcmp(name, "isEqual") && nargs == 2) return *args[0] == *args[1];
+    if (!strcmp(name, "isGreater") && nargs == 2) return *args[0] > *args[1];
+    if (!strcmp(name, "isLesser") && nargs == 2) return *args[0] < *args[1];
+    if (!strcmp(name, "isCBEmpty") || !strcmp(name, "timeGreater")) return 1;
+    if (!strcmp(name, "timeLesser")) return 0;
+    if (!strcmp(name, "startTimer")) return 0;
+    if ((!strcmp(name, "isWithinNav") || !strcmp(name, "isWithinSqNav")) &&
+        nargs == 3) {
+        uint32_t pc = a->machine->ip;
+        if (pc == a->origin_pc) {
+            a->stop = 1; /* still polling the original condition */
+            return 0;
+        }
+        if (*args[0] == a->path && *args[1] == a->ent) return 1;
+        /* Reaching a new checkpoint's own wait loop is a state advance,
+         * even when the bytecode has no intervening set/goto action. */
+        if (*args[0] != a->path && *args[1] == a->ent) {
+            if (pc == a->wait_pc) {
+                a->stop = 1;
+                a->result = FSM_NAV_PROGRESS;
+                return 0;
+            }
+            a->wait_pc = pc;
+        }
+    }
+    if (!strncmp(name, "is", 2)) {
+        if (!a->effect && a->query) {
+            int value = a->query(a->ud, name, args, nargs);
+            if (value >= 0) return value;
+        }
+        a->stop = 1;
+        a->result = a->effect ? FSM_NAV_PROGRESS : FSM_NAV_UNKNOWN;
+        return 0;
+    }
+    /* Known non-cell side effects. They are observed, never dispatched to
+     * the real host; subsequent bytecode can still override them with loss. */
+    static const char *effects[] = {
+        "cb", "cbFrom", "cbPrior", "cbFromPrior", "goto", "gotoSpeed",
+        "follow", "race", "attack", "sit", "unhide", "hide", "pushCam",
+        "popCam", "camObjObj", "camPosObj", "camPosPos", "camObjPos",
+        "setCam", "setAgg", "setSkill", "setAvoid", "setMaxAttackers",
+        "teleport", "teleportOffset", "startCar", "stopCar", "setHeliHeight",
+        "reveal", "destroy",
+        "playMovie"
+    };
+    for (size_t i = 0; i < sizeof effects / sizeof effects[0]; i++)
+        if (!strcmp(name, effects[i])) {
+            a->effect = 1;
+            return 0;
+        }
+    a->stop = 1;
+    a->result = FSM_NAV_UNKNOWN;
+    return 0;
+}
+
+/* Every pointer in the speculative frame must refer to its own snapshot.
+ * Equality searches avoid pointer subtraction between unrelated objects. */
+static int32_t *nav_copy_ref(const FsmMachine *src, FsmMachine *dst,
+                              const int32_t *ref)
+{
+    if (!ref) return NULL;
+    for (int i = 0; i < src->img->cell_count; i++)
+        if (ref == &src->img->cells[i]) return &dst->img->cells[i];
+    for (int i = 0; i < FSM_STACK_MAX; i++)
+        if (ref == &src->stk[i].v) return &dst->stk[i].v;
+    return NULL;
+}
+
+uint32_t fsm_machine_pc(const FsmMachine *m)
+{
+    return m ? m->ip : 0;
+}
+
+static FsmNavConsequence nav_consequence_variant(const FsmMachine *src,
+                                                   int variant, int *variants,
+                                                   FsmNavQuery query, void *ud)
+{
+    if (!src || src->as_count != 3 || !src->ip) return FSM_NAV_UNKNOWN;
+    const FsmInstr in = src->img->code[src->ip - 1];
+    const char *name = fsm_image_action_name(src->img, in.arg);
+    if (in.opcode != FSM_OP_ACTION || !name ||
+        (strcmp(name, "isWithinNav") && strcmp(name, "isWithinSqNav")))
+        return FSM_NAV_UNKNOWN;
+    NavLookahead a = { .path = *src->as[0], .ent = *src->as[1],
+                       .variant = variant, .stride = 1, .variants = 1,
+                       .result = FSM_NAV_UNKNOWN, .query = query, .ud = ud };
+    FsmImage img = *src->img;
+    FsmMachine m = *src;
+    a.machine = &m;
+    a.origin_pc = src->ip;
+    int32_t *frame[FSM_MACHINE_MAX_ARGS];
+    img.cells = malloc((size_t)(img.cell_count ? img.cell_count : 1) * sizeof(int32_t));
+    if (!img.cells) return FSM_NAV_UNKNOWN;
+    if (img.cell_count)
+        memcpy(img.cells, src->img->cells, (size_t)img.cell_count * sizeof(int32_t));
+    m.img = &img;
+    m.frame = frame;
+    for (int i = 0; i < m.frame_len; i++) {
+        frame[i] = nav_copy_ref(src, &m, src->frame[i]);
+        if (!frame[i]) goto done;
+    }
+    for (int i = 0; i < FSM_STACK_MAX; i++) {
+        m.stk[i].ref = nav_copy_ref(src, &m, src->stk[i].ref);
+        if (src->stk[i].ref && !m.stk[i].ref) goto done;
+    }
+    FsmHost host = { nav_lookahead_action, NULL, &a };
+    m.host = &host;
+    m.ar = 1;
+    m.as_count = 0;
+    for (int steps = 0; steps < 128 && !a.stop; steps++) {
+        FsmStepResult r = fsm_run(&m, 1);
+        if (r == FSM_STEP_RST) {
+            a.result = a.effect ? FSM_NAV_PROGRESS : FSM_NAV_UNKNOWN;
+            break;
+        }
+        if (r != FSM_STEP_YIELD) { a.result = FSM_NAV_UNKNOWN; break; }
+    }
+done:
+    if (a.variants > *variants) *variants = a.variants;
+    free(img.cells);
+    return a.result;
+}
+
+FsmNavConsequence fsm_machine_nav_consequence(const FsmMachine *m,
+                                               FsmNavQuery query, void *ud)
+{
+    FsmNavConsequence result = FSM_NAV_PROGRESS;
+    int variants = 1;
+    for (int i = 0; i < variants; i++) {
+        FsmNavConsequence r = nav_consequence_variant(m, i, &variants, query, ud);
+        if (r == FSM_NAV_FAILURE) return r;
+        if (r == FSM_NAV_UNKNOWN) result = r;
+    }
+    return result;
 }

@@ -96,7 +96,8 @@ const CASES = [
  * fallback, and SW/GPU presence. The three frame-0 pixels plus the disc removal
  * move only n01-fx to 0x64fa4c09; HUD exactness and parity limits are unchanged. */
 const SWIFTSHADER_FIDELITY_HASHES = Object.freeze({
-  'p01-world': '0xd3b9e84c',
+  /* Authored horizon layer: only this visible world case changes. */
+  'p01-world': '0xbf65f4ac',
   /* 2026-09-03 steward repin (H-UAT-079d weapon HUD on the Stage-3 tree):
    * measured on the merged tree; each N01 software frame differs from the
    * Stage-3 golden by exactly 2,819 px, all inside the weapon-panel rows

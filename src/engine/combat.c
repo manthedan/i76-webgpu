@@ -320,6 +320,16 @@ static int scene_obj_damage_target(int scene_obj)
     return -1;
 }
 
+int combat_scene_entity(int scene_obj)
+{
+    if (scene_obj < 0) return -1;
+    for (int i = 0; i < COMBAT_MAX_ENTS; i++)
+        if (s_cents[i].used && s_cents[i].has_obj &&
+            s_cents[i].scene_obj == scene_obj)
+            return i;
+    return -1;
+}
+
 /* `attribute_targets` is the ordnance ordering switch. Projectile flight
  * excludes live damageable scene objects here because segment_target_hit()
  * owns their identical OBBs and damage attribution; LOS keeps them as world
@@ -343,10 +353,10 @@ static const char *impact_effect_for_class(int class_id,
 static int segment_world_hit(const double a[3], const double b[3],
                              int ignore_scene_obj, int attribute_targets,
                              int native_heightfield, double radius,
-                             double *hit_t, int *impact_kind)
+                             double *hit_t, int *impact_kind, int *hit_obj)
 {
     double best = 2.0, t;
-    int kind = -1;
+    int kind = -1, object = -1;
     int terrain_hit = native_heightfield
         ? terrain_ordnance_segment_hit(a, b, &t)
         : terrain_segment_hit(a, b, &t);
@@ -369,12 +379,14 @@ static int segment_world_hit(const double a[3], const double b[3],
             if (segment_obb_hit(a, b, c, half, axis, ys, &t) && t < best) {
                 best = t;
                 kind = scene_obj_class_id(o);
+                object = o;
             }
         }
     }
     if (best > 1.0) return 0;
     if (hit_t) *hit_t = best;
     if (impact_kind) *impact_kind = kind;
+    if (hit_obj) *hit_obj = object;
     return 1;
 }
 
@@ -387,7 +399,7 @@ int combat_can_see(int attacker, int target)
         return 0;
     a[1] += 1.0;
     b[1] += 1.0;
-    return !segment_world_hit(a, b, target_obj, 0, 1, 0.0, &t, NULL);
+    return !segment_world_hit(a, b, target_obj, 0, 1, 0.0, &t, NULL, NULL);
 }
 
 static double wrap_angle(double a)
@@ -692,6 +704,11 @@ void combat_register(int ent, int team, int class_id, int scene_obj,
     e->has_obj   = team >= 0;
     snprintf(e->label, sizeof e->label, "%s", label ? label : "?");
     e->hp = e->hp_max = COMBAT_DEFAULT_HP;
+    if (class_id != 1 && class_id != 9) {
+        int hp = scene_obj_hp(scene_obj, 1);
+        if (hp >= 0)
+            e->hp = e->hp_max = hp;
+    }
     e->alive     = 1;
     e->killed_by = -1;
     e->eng_target = -1;
@@ -1065,7 +1082,7 @@ static void apply_damage(int target, int dmg, int attacker, const char *how,
                          int spawn_death_fx)
 {
     CombatEnt *e = ent_at(target);
-    if (!e || !e->alive || dmg <= 0)
+    if (!e || !e->alive || dmg <= 0 || e->hp_max == 0)
         return;
     int before = e->hp;
     e->hp -= dmg;
@@ -1954,14 +1971,14 @@ static void flame_stream_fire(int attacker, int damage, int ordnance_type,
                     start[1] + fy / n * range,
                     start[2] + fz / n * range };
     double wt = 2.0, tt = 2.0, end_t = 1.0;
-    int target = -1, impact_kind = -1;
+    int target = -1, impact_kind = -1, hit_obj = -1;
     int th = segment_target_hit(start, b, attacker,
                                 COMBAT_FLAME_STREAM_RADIUS, &target, &tt);
     /* The marked flamer convention retains its central rendered-triangle
      * terrain test; FUN_004adf90 is not an ORDF 9/10/11 owner. */
     int wh = segment_world_hit(start, b, -1, 1, 0,
                                COMBAT_FLAME_STREAM_RADIUS, &wt,
-                               &impact_kind);
+                               &impact_kind, &hit_obj);
     int weapon_class = fx_weapon_class(ordnance_type, damage);
     if (attacker >= 0 && attacker < COMBAT_MAX_ENTS)
         s_launch_count[attacker]++;
@@ -2003,6 +2020,8 @@ static void flame_stream_fire(int attacker, int damage, int ordnance_type,
     } else if (wh) {
         if (attacker >= 0 && attacker < COMBAT_MAX_ENTS)
             s_world_absorb_count[attacker]++;
+        if (combat_scene_entity(hit_obj) < 0)
+            scene_obj_damage(hit_obj, damage);
         fx_impact(end, COMBAT_FX_HIT_WORLD, 0, weapon_class, damage, speed,
                   impact_effect_for_class(impact_kind, impact_ground,
                                           impact_car, impact_building,
@@ -2096,11 +2115,11 @@ static void projectile_tick(void)
                        p->y+p->vy/p->speed*step,
                        p->z+p->vz/p->speed*step};
         double wt = 2.0, tt = 2.0;
-        int target = -1, impact_kind = -1;
+        int target = -1, impact_kind = -1, hit_obj = -1;
         int th = segment_target_hit(a, b, p->attacker, 0.0,
                                     &target, &tt);
         int wh = segment_world_hit(a, b, -1, 1, 1, 0.0, &wt,
-                                   &impact_kind);
+                                   &impact_kind, &hit_obj);
         if (th && (!wh || tt < wt)) {
             double impact[3] = { a[0] + (b[0] - a[0]) * tt,
                                  a[1] + (b[1] - a[1]) * tt,
@@ -2122,8 +2141,10 @@ static void projectile_tick(void)
                                  a[2] + (b[2] - a[2]) * wt };
             if (p->attacker >= 0 && p->attacker < COMBAT_MAX_ENTS)
                 s_world_absorb_count[p->attacker]++;
-            /* Terrain/world absorbs the projectile: no HP, but the same
-             * parsed-class impact family remains visible at real contact. */
+            /* Non-FSM scenery owns its SDFC pool without consuming one of
+             * the bounded mission/AI slots or changing scripted enemy sets. */
+            if (combat_scene_entity(hit_obj) < 0)
+                scene_obj_damage(hit_obj, p->damage);
             fx_impact(impact, COMBAT_FX_HIT_WORLD, 0, p->weapon_class,
                       p->damage, p->speed,
                       impact_effect_for_class(impact_kind, p->impact_ground,
@@ -2560,7 +2581,7 @@ int combat_hp_lesser(int ent, int pct)
     CombatEnt *e = ent_at(ent);
     if (!e)
         return 0;
-    return e->hp * 100 < pct * e->hp_max;
+    return (int64_t)e->hp * 100 < (int64_t)pct * e->hp_max;
 }
 
 int combat_ammo_lesser(int ent, int pct)

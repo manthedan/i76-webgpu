@@ -632,7 +632,7 @@ struct UFrame {
   cam_forward: vec4<f32>,
   // x=focal_px, y=cx, z=cy, w=1 when authored sky texture is bound
   cam_proj: vec4<f32>,
-  // xy = render-target pixels, z = point-sample indexed world textures.
+  // xy = render-target pixels, z = point-sample world, w = horizon enabled.
   render_target: vec4<f32>,
 };
 struct UModel {
@@ -655,6 +655,7 @@ struct UModel {
 @group(0) @binding(6) var u_hud_mask: texture_2d<f32>; // explicit overlay coverage
 @group(0) @binding(7) var u_road_mask: texture_2d<u32>;
 @group(0) @binding(8) var u_road_terrain_z: texture_2d<f32>;
+@group(0) @binding(9) var u_horizon: texture_2d<f32>;
 @group(1) @binding(0) var<uniform> u_model: UModel;
 @group(2) @binding(0) var u_tex: texture_2d<f32>;
 @group(2) @binding(1) var u_samp: sampler;
@@ -815,33 +816,62 @@ fn vs_sky(@builtin(vertex_index) vi: u32) -> SkyOut {
   o.t = (1.0 - p.y) * 0.5;              // 0 at top of screen, 1 at bottom
   return o;
 }
-@fragment
-fn fs_sky(i: SkyOut) -> @location(0) vec4<f32> {
-  // alpha 0: sky is not geometry (coverage mask).
+// Same 16-wall prism intersection as worldrender.c. PORT DECISION: eye-level
+// base until the native vertical-placement scale is decoded (H-UAT-029).
+fn horizon_color(d: vec3<f32>) -> vec4<f32> {
+  if (u_frame.render_target.w < 0.5 || d.y < 0.0 || dot(d.xz, d.xz) == 0.0) {
+    return vec4f(0.0);
+  }
+  var az = atan2(d.x, d.z);
+  if (az < 0.0) { az += 6.283185307179586; }
+  let slot = min(u32(az * (8.0 / 3.141592653589793)), 15u);
+  let normals = array<vec2f, 16>(
+    vec2f( .1950903220161283, .9807852804032304),
+    vec2f( .5555702330196022, .8314696123025452),
+    vec2f( .8314696123025452, .5555702330196022),
+    vec2f( .9807852804032304, .1950903220161283),
+    vec2f( .9807852804032304,-.1950903220161283),
+    vec2f( .8314696123025452,-.5555702330196022),
+    vec2f( .5555702330196022,-.8314696123025452),
+    vec2f( .1950903220161283,-.9807852804032304),
+    vec2f(-.1950903220161283,-.9807852804032304),
+    vec2f(-.5555702330196022,-.8314696123025452),
+    vec2f(-.8314696123025452,-.5555702330196022),
+    vec2f(-.9807852804032304,-.1950903220161283),
+    vec2f(-.9807852804032304, .1950903220161283),
+    vec2f(-.8314696123025452, .5555702330196022),
+    vec2f(-.5555702330196022, .8314696123025452),
+    vec2f(-.1950903220161283, .9807852804032304));
+  let n = normals[slot];
+  let distance = 5884.711682419382 / dot(d.xz, n);
+  let v = distance * d.y / 1170.5419320967698;
+  if (v >= 1.0) { return vec4f(0.0); }
+  let u = 0.5 + distance * (d.x * n.y - d.z * n.x) / 2341.0838641935396;
+  let x = clamp(i32(floor(1.0 + 126.0 * u)), 1, 127);
+  let y = i32(floor(v * 128.0)) + i32(slot) * 128;
+  return textureLoad(u_horizon, vec2i(x, y), 0);
+}
+fn sky_color(pos: vec4<f32>, t: f32) -> vec4<f32> {
+  let px = pos.x - u_frame.cam_proj.y;
+  let py = u_frame.cam_proj.z - pos.y;
+  let d = u_frame.cam_proj.x * u_frame.cam_forward.xyz +
+          px * u_frame.cam_right.xyz + py * u_frame.cam_up.xyz;
+  let horizon = horizon_color(d);
+  // Both backdrops keep alpha zero: they do not own world depth/coverage.
+  if (horizon.a > 0.5) { return vec4f(horizon.rgb, 0.0); }
   if (u_frame.cam_proj.w > 0.5) {
-    // Equirectangular dome matching worldrender draw_sky_tex (SKY_AZ_WRAPS=4,
-    // SKY_ROWS_PER_RAD=256, SKY_HORIZON_ROW=64). Use fragment position
-    // from the vertex-built clip pos (framebuffer coords after raster).
-    //
-    // Do NOT fract() before sampling: wrapping address mode + level-0
-    // sample matches the software path's umask/vmask wrap. Pre-fract
-    // with bilinear/mips drew visible tile "links" (derivative blow-up
-    // at every azimuth wrap and at the tile edge).
-    let px = i.pos.x - u_frame.cam_proj.y;
-    let py = u_frame.cam_proj.z - i.pos.y;
-    let f = u_frame.cam_proj.x;
-    var d = f * u_frame.cam_forward.xyz + px * u_frame.cam_right.xyz
-            + py * u_frame.cam_up.xyz;
-    d = normalize(d);
+    let ray = normalize(d);
     let dim = vec2<f32>(textureDimensions(u_sky_tex));
-    let uu = 0.5 + atan2(d.x, d.z) / (2.0 * 3.14159265) * 4.0;
-    let vv = (64.0 - asin(clamp(d.y, -1.0, 1.0)) * 256.0) / max(dim.y, 1.0);
-    // Nearest + lod 0: software sky is point-sampled; mips at the
-    // atan2 cut and at each of the 4 azimuth wraps left bright seams.
+    let uu = 0.5 + atan2(ray.x, ray.z) / (2.0 * 3.14159265) * 4.0;
+    let vv = (64.0 - asin(clamp(ray.y, -1.0, 1.0)) * 256.0) / max(dim.y, 1.0);
     let c = textureSampleLevel(u_sky_tex, u_sky_samp, vec2<f32>(uu, vv), 0.0);
     return vec4<f32>(c.rgb, 0.0);
   }
-  return vec4<f32>(mix(u_frame.zenith.rgb, u_frame.sky.rgb, pow(i.t, 1.6)), 0.0);
+  return vec4<f32>(mix(u_frame.zenith.rgb, u_frame.sky.rgb, pow(t, 1.6)), 0.0);
+}
+@fragment
+fn fs_sky(i: SkyOut) -> @location(0) vec4<f32> {
+  return sky_color(i.pos, i.t);
 }
 
 /* ---- HUD overlay: 8-bit indexed layer through the level palette ------- */
@@ -895,20 +925,7 @@ struct SkyMirrorIn { @location(0) t: f32, };
 @fragment
 fn fs_sky_mirror(@builtin(position) fpos: vec4<f32>, i: SkyMirrorIn) -> @location(0) vec4<f32> {
   if (hud_covers(fpos)) { discard; }
-  if (u_frame.cam_proj.w > 0.5) {
-    let px = fpos.x - u_frame.cam_proj.y;
-    let py = u_frame.cam_proj.z - fpos.y;
-    let f = u_frame.cam_proj.x;
-    var d = f * u_frame.cam_forward.xyz + px * u_frame.cam_right.xyz
-            + py * u_frame.cam_up.xyz;
-    d = normalize(d);
-    let dim = vec2<f32>(textureDimensions(u_sky_tex));
-    let uu = 0.5 + atan2(d.x, d.z) / (2.0 * 3.14159265) * 4.0;
-    let vv = (64.0 - asin(clamp(d.y, -1.0, 1.0)) * 256.0) / max(dim.y, 1.0);
-    let c = textureSampleLevel(u_sky_tex, u_sky_samp, vec2<f32>(uu, vv), 0.0);
-    return vec4<f32>(c.rgb, 0.0);
-  }
-  return vec4<f32>(mix(u_frame.zenith.rgb, u_frame.sky.rgb, pow(i.t, 1.6)), 0.0);
+  return sky_color(fpos, i.t);
 }
 
 struct TerrMirrorIn {
@@ -1114,6 +1131,8 @@ export class GpuScene {
     /* Placeholder 1x1 sky until setSkyTex; gradient used when skyOn=0. */
     this.skyTex = this._solidTexture([80, 120, 180, 255]);
     this.skyOn = false;
+    this.horizonTex = this._solidTexture([0, 0, 0, 0]);
+    this.horizonOn = false;
     this.camBasis = {
       right: [1, 0, 0], up: [0, 1, 0], forward: [0, 0, 1],
       focal: this.w * 0.5, cx: this.w * 0.5, cy: this.h * 0.5,
@@ -1131,6 +1150,7 @@ export class GpuScene {
         { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         { binding: 7, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'uint' } },
         { binding: 8, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 9, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
       ],
     });
     /* The seed and compatibility passes sample the HUD coverage mask for the
@@ -1322,6 +1342,7 @@ export class GpuScene {
         { binding: 6, resource: this.hudMaskTex.createView() },
         { binding: 7, resource: this.roadMaskView },
         { binding: 8, resource: this.roadTerrainZView },
+        { binding: 9, resource: this.horizonTex.createView() },
       ],
     });
     this.mirrorBind0 = this.device.createBindGroup({
@@ -1336,6 +1357,7 @@ export class GpuScene {
         { binding: 6, resource: this.hudMaskTex.createView() },
         { binding: 7, resource: this.roadMaskView },
         { binding: 8, resource: this.roadTerrainZView },
+        { binding: 9, resource: this.horizonTex.createView() },
       ],
     });
     const roadEntries = ubo => [
@@ -1379,13 +1401,18 @@ export class GpuScene {
     u.set([b.up[0], b.up[1], b.up[2], 0], 36);
     u.set([b.forward[0], b.forward[1], b.forward[2], 0], 40);
     u.set([b.focal, b.cx, b.cy, this.skyOn ? 1 : 0], 44);
-    u.set([this.w, this.h, this.pointSampled ? 1 : 0, 0], 48);
+    u.set([this.w, this.h, this.pointSampled ? 1 : 0, this.horizonOn ? 1 : 0], 48);
     return u;
   }
 
   /** Authored cloud .map as RGBA. Null clears to gradient sky. The previous
    * sky texture is released — sky skins are mission-owned, never per-frame. */
   setSkyTex(tex) {
+    if (this.horizonTex) this.horizonTex.destroy();
+    this.horizonOn = !!tex?.horizon;
+    this.horizonTex = this.horizonOn
+      ? this._uploadTexture(128, 2048, tex.horizon)
+      : this._solidTexture([0, 0, 0, 0]);
     if (this.skyTex) this.skyTex.destroy();
     if (!tex || !tex.w || !tex.rgba) {
       this.skyOn = false;
@@ -2359,6 +2386,7 @@ export class GpuScene {
     }
     if (this.terrainUbo) { this.terrainUbo.destroy(); this.terrainUbo = null; }
     if (this.skyTex) { this.skyTex.destroy(); this.skyTex = null; }
+    if (this.horizonTex) { this.horizonTex.destroy(); this.horizonTex = null; }
     this.white.destroy();
     this.rt.destroy();
     this.depth.destroy();
@@ -2794,11 +2822,18 @@ function skyRampEntry(M, index, fallback) {
 }
 
 export function readSkyTex(M) {
-  if (!M._web_gpu_sky_tex || M._web_gpu_sky_tex() !== 0) return null;
-  const w = M._web_gpu_sky_tex_w(), h = M._web_gpu_sky_tex_h();
-  const p = M._web_gpu_sky_tex_rgba();
-  if (!w || !h || !p) return null;
-  return { w, h, rgba: heap8(M).slice(p, p + w * h * 4) };
+  let tex = null;
+  if (M._web_gpu_sky_tex && M._web_gpu_sky_tex() === 0) {
+    const w = M._web_gpu_sky_tex_w(), h = M._web_gpu_sky_tex_h();
+    const p = M._web_gpu_sky_tex_rgba();
+    if (w && h && p) tex = { w, h, rgba: heap8(M).slice(p, p + w * h * 4) };
+  }
+  const horizon = M._web_gpu_horizon_tex?.();
+  if (horizon) {
+    tex ??= { w: 0, h: 0, rgba: null };
+    tex.horizon = heap8(M).slice(horizon, horizon + 128 * 128 * 16 * 4);
+  }
+  return tex;
 }
 
 export function readSkyColor(M) {

@@ -90,6 +90,12 @@ int  scene_load(const char *name);
  * for a missing, unresolvable or corrupt asset. The returned pointer is
  * valid until the next scene_load/scene_unload.
  */
+/* Authored WRLD+134 horizon list; sixteen 128x128 transparent MAP tiles.
+ * Graphics option defaults ON and persists across mission replacement. */
+const char *scene_horizon_name(void);
+int         scene_horizon_tex(int slot, const RTex **out);
+void        scene_horizon_enable(int enabled);
+
 const char *scene_sky_name(void);
 int         scene_sky_tex(const RTex **out);
 
@@ -235,6 +241,11 @@ int      scene_obj_part_xform(int obj, int part, double out12[12]);
  */
 const char *scene_obj_label(int obj);
 int         scene_obj_class_id(int obj); /* authored ODEF runtime class */
+/* SDFC +40 health, -1 when absent (zero remains authored/inert). The mutable
+ * pool is for scenery without an FSM combat owner; registered bodies use
+ * combat_hp/max. Damage hides destroyed scenery through the normal scene API. */
+int         scene_obj_hp(int obj, int maximum);
+int         scene_obj_damage(int obj, int damage);
 int         scene_obj_is_vehicle_mesh(int obj);
 
 /*

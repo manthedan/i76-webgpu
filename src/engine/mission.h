@@ -229,18 +229,21 @@ void mission_set_skip(int pressed);
  */
 int mission_scripted_car(double pos[3], double *yaw, double *speed);
 
+/* An authored user teleport occurred in the last mission_tick. The host
+ * must apply mission_scripted_car even when no camera owns that tick. */
+int mission_user_teleported(void);
+
 /*
  * mission_nav_goal(out_xz, radius, square)
  *   PORT GUIDANCE hook (added for the drive HUD cue; not an original
  *   engine API). Scripted trips keep their objectives inside the FSM, but
  *   the one thing a script polls the PLAYER about is arrival: this
- *   reports the first UNSATISFIED isWithinNav/isWithinSqNav gate
+ *   reports an UNSATISFIED progress isWithinNav/isWithinSqNav gate
  *   evaluated for the `user` entity during the current mission_tick —
  *   the gate's path node-0 XZ (the BINARY-VERIFIED anchor, D6) and
  *   radius, plus whether the gate is a square.
  *
- *   The candidate is cleared at the top of every mission_tick and only
- *   re-recorded by an active unsatisfied user-gate evaluation, so a 1
+ *   Only records refreshed during this mission_tick are eligible, so a 1
  *   return always means "the script is waiting on the player to be here
  *   right now". Returns 0 for FSM-less missions (the arena objective
  *   controller owns those — mission_objective_state), before the first
@@ -255,17 +258,21 @@ int mission_nav_goal(double out_xz[2], double *radius, int *square);
  *   original engine API). mission_nav_goal above lives exactly one tick,
  *   so a HUD reading it directly flips between targets when two FSM
  *   machines poll different gates on alternating round-robin ticks
- *   (H-UAT-014). This getter instead reports EVERY nav gate the script
- *   is currently waiting on, tracked across ticks by (path, entity) with
+ *   (H-UAT-014). This getter instead reports progress nav gates the script
+ *   is currently waiting on, tracked across ticks by predicate site with
  *   a short poll TTL, in stable first-seen order:
  *
- *   - a gate on the `user` entity is a point the PLAYER must reach
+ *   - a progress gate on the `user` entity is a point the PLAYER can reach
  *     (user=1; x/z is the gate's node-0 anchor, D6);
  *   - a gate on another live, non-hostile entity is an escort duty —
  *     the script is waiting on THAT entity to arrive, so x/z is the
  *     entity's live position, the thing the player drives with.
  *     Hostile/dead/hidden entities' gates are script plumbing and are
  *     never reported.
+ *
+ *   User arrival consequences are a bounded bytecode lookahead (port UI,
+ *   not native objective semantics). Failure and unknown branches, plus
+ *   destinations inside another live failure region, are suppressed.
  *
  *   `label` is the mission's own authored FSM entity label (P01:
  *   "tanker1", "enemy5"), "" when unnamed; never NULL. Returns the
@@ -290,6 +297,15 @@ typedef struct {
 int mission_objective_lines(MissionObjectiveLine *out, int max);
 int mission_objective_reached_age(void);
 
+/* Read-only audit of live user predicates, including suppressed boundaries.
+ * consequence: 0 unknown, 1 progress, 2 failure (FsmNavConsequence).
+ * A progress site inside another live failure region has guidance=0. */
+typedef struct {
+    double x, z, r;
+    int sq, consequence, guidance;
+} MissionNavPredicate;
+int mission_nav_predicates(MissionNavPredicate *out, int max);
+
 /*
  * mission_entity_label(ent)
  *   The authored FSM entity label for a live mission entity ("tanker1"),
@@ -298,6 +314,8 @@ int mission_objective_reached_age(void);
  *   the mission itself named.
  */
 const char *mission_entity_label(int ent);
+/* Resolved body owner's scene object for read-only pose diagnostics; -1 if absent. */
+int mission_entity_scene_object(int ent);
 
 /*
  * mission_tick(void)

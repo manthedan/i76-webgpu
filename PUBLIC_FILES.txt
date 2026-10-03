@@ -112,6 +112,7 @@ tools/ghidra/tests/synthetic_fixture.c
 tools/ghidra/xref_addr.py
 tools/ghidra/xref_fn.py
 tools/ghidra_query.py
+tools/horizon_probe.c
 tools/lzodec_cli.c
 tools/pixel_history_probe.c
 tools/public_verify.sh

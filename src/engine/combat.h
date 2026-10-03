@@ -37,7 +37,11 @@
  *        minimum ratio after damage reaches the impacted VCF pools. A strong
  *        impacted facet therefore cannot be bypassed by an unrelated weak
  *        raw scalar. No hull constant is invented. Non-cars and unresolved
- *        VCFs retain the 100 fallback; that is not vehicle balance.
+ *        VCFs retain the 100 fallback only without authored SDFC health.
+ *        Structures use SDFC +40; zero stays inert (PORT DECISION pending
+ *        the H-UAT-030 native durability demand), positive pools take the
+ *        existing scalar packets. Scenery without FSM identity owns its
+ *        pool in scene.c and takes the same projectile/stream world contacts.
  *  D-C2  The eight authored side facets are car-damage authority; one derived
  *        scalar remains the compatibility view for hpLesser/FSM/HUD callers.
  *        FACT phase-b-contact-damage.md §3.2 primary packets subtract the same
@@ -511,6 +515,7 @@ void combat_tick(void);
 
 int combat_hp(int ent);               /* -1 for unknown entities         */
 int combat_hp_max(int ent);
+int combat_scene_entity(int scene_obj); /* -1 for scenery without FSM owner */
 int combat_alive(int ent);
 int combat_is_hidden(int ent);
 int combat_ammo_left(int ent);        /* selected weapon; -1 infinite    */

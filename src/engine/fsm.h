@@ -144,6 +144,16 @@ bool    fsm_machine_watchdog_tripped(const FsmMachine *m); /* latched at WARN */
 int32_t fsm_machine_ar(const FsmMachine *m);               /* action result    */
 int     fsm_machine_slice_count(const FsmMachine *m);      /* instrs last slice */
 
+/* Port HUD analysis, called during a proximity dispatch. It copies the live
+ * frame and cells; it never calls the mission host or changes the VM. */
+typedef enum { FSM_NAV_UNKNOWN, FSM_NAV_PROGRESS, FSM_NAV_FAILURE } FsmNavConsequence;
+/* Optional read-only evaluation of additional conditions BEFORE effects.
+ * Return -1 when unknown. Never call the real host dispatch here. */
+typedef int (*FsmNavQuery)(void *ud, const char *name, int32_t **args, int nargs);
+FsmNavConsequence fsm_machine_nav_consequence(const FsmMachine *m,
+                                               FsmNavQuery query, void *ud);
+uint32_t fsm_machine_pc(const FsmMachine *m); /* next instruction */
+
 /* ----------------------------------------------------------------------- */
 /* Read-only table accessors (for host bridges, e.g. the mission runner)    */
 /* ----------------------------------------------------------------------- */

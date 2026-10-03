@@ -2807,8 +2807,8 @@ void web_drive_step(void)
         /*
          * The live cutscene camera owns this input snapshot. Space is the
          * original isKeypress skip edge, not a simultaneous weapon shot. The
-         * FSM mover advances first, then its fresh target is applied while the
-         * camera remains live. popCam is the player-control handoff.
+         * FSM mover advances first, then its fresh target is applied even if
+         * this tick runs popCam. That final placement precedes player control.
          */
         if (!mission_ticked) {
             double x, y, z, yaw, pitch, roll;
@@ -2819,7 +2819,7 @@ void web_drive_step(void)
         }
 
         double p[3], yaw, speed;
-        if (mission_cam_active() && mission_scripted_car(p, &yaw, &speed)) {
+        if (mission_scripted_car(p, &yaw, &speed)) {
             car_set_scripted_pose(p[0], p[2], yaw, speed);
         } else if (mission_cam_active()) {
             /* A camera-only cutscene suppresses controls but lets the real car
@@ -2916,6 +2916,11 @@ void web_drive_step(void)
 
         mission_set_skip(skip_pressed);
         mission_tick();
+        if (mission_user_teleported()) {
+            double p[3], yaw, speed;
+            if (mission_scripted_car(p, &yaw, &speed))
+                car_set_scripted_pose(p[0], p[2], yaw, speed);
+        }
     }
 
     s_an_fire_prev = s_analog_on && s_an_fire;
@@ -3796,6 +3801,52 @@ const char *web_ai_route_state(void)
     return buf;
 }
 
+/* Exact sim pose/support, separate from route telemetry so FOLLOW and idle
+ * cars are observable too. Model-origin height is not a tire/hull gap. */
+EMSCRIPTEN_KEEPALIVE
+const char *web_ai_ground_state(void)
+{
+    static char buf[32768];
+    size_t n = 0;
+    int first = 1;
+    n += snprintf(buf + n, sizeof buf - n, "[");
+    for (int ent = 0; ent < mission_contact_count() && n + 768 < sizeof buf;
+         ent++) {
+        MissionContact c;
+        double p[3], frame[12], low, high;
+        int obj = mission_entity_scene_object(ent);
+        if (obj < 0 || !mission_scene_object_is_vehicle(obj) ||
+            mission_scene_object_is_player_vehicle(obj) ||
+            mission_contact(ent, &c) != 0 || ai_get_pos(ent, p) != 0)
+            continue;
+        int valid = scene_obj_world_xform(obj, frame) == 0 &&
+                    scene_obj_ground_gaps(obj, terrain_height_at,
+                                          &low, &high) == 0;
+        if (!valid) {
+            memset(frame, 0, sizeof frame);
+            low = high = 0.0;
+        }
+        n += snprintf(buf + n, sizeof buf - n,
+                      "%s{\"ent\":%d,\"label\":\"%.24s\","
+                      "\"alive\":%d,\"hidden\":%d,\"physical\":%d,"
+                      "\"goal\":%d,\"path\":%d,\"valid\":%d,"
+                      "\"x\":%.9f,\"y\":%.9f,\"z\":%.9f,"
+                      "\"originAGL\":%.9f,\"minGap\":%.9f,\"maxGap\":%.9f,"
+                      "\"up\":[%.9f,%.9f,%.9f],\"heading\":%.9f,"
+                      "\"roadClearance\":%.9f}",
+                      first ? "" : ",", ent, mission_entity_label(ent),
+                      c.alive, c.hidden, ai_physical_active(ent),
+                      ai_goal(ent), ai_path_id(ent), valid,
+                      p[0], p[1], p[2], p[1] - terrain_height_at(p[0], p[2]),
+                      low, high, frame[3], frame[4], frame[5],
+                      ai_get_heading(ent),
+                      terrain_road_nearest(p[0], p[2], NULL, NULL, NULL));
+        first = 0;
+    }
+    snprintf(buf + n, sizeof buf - n, "]");
+    return buf;
+}
+
 EMSCRIPTEN_KEEPALIVE
 uint32_t web_vehicle_contacts(void)
 {
@@ -4017,6 +4068,24 @@ EMSCRIPTEN_KEEPALIVE
 int web_audit_target_hp(int ent, int hp)
 {
     return combat_probe_set_hp(ent, hp);
+}
+
+/* Read-only structure audit: FSM bodies retain their combat owner; scenery
+ * without a script identity reads its scene-owned SDFC pool. */
+EMSCRIPTEN_KEEPALIVE
+const char *web_audit_structure(int obj)
+{
+    static char buf[256];
+    int ent = combat_scene_entity(obj);
+    snprintf(buf, sizeof buf,
+             "{\"label\":\"%s\",\"class\":%d,\"ent\":%d,"
+             "\"authoredHp\":%d,\"hp\":%d,\"hpMax\":%d,\"hidden\":%d}",
+             scene_obj_label(obj), scene_obj_class_id(obj), ent,
+             scene_obj_hp(obj, 1),
+             ent >= 0 ? combat_hp(ent) : scene_obj_hp(obj, 0),
+             ent >= 0 ? combat_hp_max(ent) : scene_obj_hp(obj, 1),
+             scene_obj_hidden(obj));
+    return buf;
 }
 
 /* Gate-35 observes the same current nearest-hostile owner that combat_tick
@@ -4282,7 +4351,7 @@ const char *web_objective_state(void)
 EMSCRIPTEN_KEEPALIVE
 const char *web_objective_lines(void)
 {
-    static char buf[1024];
+    static char buf[24576];
     MissionObjectiveLine ln[6];
     int n = mission_objective_lines(ln, 6);
     double x, y, z, yaw, pitch, roll;
@@ -4291,7 +4360,7 @@ const char *web_objective_lines(void)
     w += (size_t)snprintf(buf + w, sizeof buf - w,
                           "{\"reachedAge\":%d,\"lines\":[",
                           mission_objective_reached_age());
-    for (int i = 0; i < n && w + 160 < sizeof buf; i++) {
+    for (int i = 0; i < n && w + 256 < sizeof buf; i++) {
         double dx = ln[i].x - x, dz = ln[i].z - z;
         double dist = sqrt(dx * dx + dz * dz);
         double b = atan2(-dx, dz) - yaw;
@@ -4308,9 +4377,22 @@ const char *web_objective_lines(void)
         label[li] = '\0';
         w += (size_t)snprintf(buf + w, sizeof buf - w,
                               "%s{\"user\":%d,\"label\":\"%s\","
-                              "\"dist\":%.1f,\"bearing\":%.4f,\"r\":%.1f}",
+                              "\"dist\":%.1f,\"bearing\":%.4f,\"r\":%.1f,"
+                              "\"x\":%.3f,\"z\":%.3f,\"classification\":\"PROGRESS\"}",
                               i ? "," : "", ln[i].user, label, dist, b,
-                              ln[i].r);
+                              ln[i].r, ln[i].x, ln[i].z);
+    }
+    w += (size_t)snprintf(buf + w, sizeof buf - w, "],\"predicates\":[");
+    MissionNavPredicate predicates[128];
+    int np = mission_nav_predicates(predicates, 128);
+    static const char *classes[] = { "UNKNOWN", "PROGRESS", "FAILURE" };
+    for (int i = 0; i < np && w + 192 < sizeof buf; i++) {
+        const MissionNavPredicate *p = &predicates[i];
+        w += (size_t)snprintf(buf + w, sizeof buf - w,
+            "%s{\"x\":%.3f,\"z\":%.3f,\"r\":%.1f,\"sq\":%d,"
+            "\"classification\":\"%s\",\"guidance\":%d}",
+            i ? "," : "", p->x, p->z, p->r, p->sq,
+            classes[p->consequence], p->guidance);
     }
     snprintf(buf + w, sizeof buf - w, "]}");
     return buf;
@@ -7413,12 +7495,15 @@ const uint8_t *web_gpu_terrain_tex_rgba(void) { return s_gpu_tex; }
 
 /* Authored cloud sky tile (WDEF/WRLD +82) as palette-expanded RGBA. */
 static uint8_t  *s_gpu_sky;
+static uint8_t  *s_gpu_horizon;
 static uint32_t s_gpu_sky_w, s_gpu_sky_h;
 
 static void gpu_sky_invalidate(void)
 {
     free(s_gpu_sky);
     s_gpu_sky = NULL;
+    free(s_gpu_horizon);
+    s_gpu_horizon = NULL;
     s_gpu_sky_w = s_gpu_sky_h = 0;
 }
 
@@ -7488,6 +7573,30 @@ uint32_t web_gpu_sky_tex_h(void) { return s_gpu_sky_h; }
 
 EMSCRIPTEN_KEEPALIVE
 const uint8_t *web_gpu_sky_tex_rgba(void) { return s_gpu_sky; }
+
+/* Sixteen MAPs in authored list order, one 128-pixel-high atlas row each. */
+EMSCRIPTEN_KEEPALIVE
+const uint8_t *web_gpu_horizon_tex(void)
+{
+    free(s_gpu_horizon);
+    s_gpu_horizon = NULL;
+    const RTex *tiles[16];
+    for (int i = 0; i < 16; i++)
+        if (!scene_horizon_tex(i, &tiles[i])) return NULL;
+    const uint8_t *pal = hud_palette();
+    if (!pal) return NULL;
+    s_gpu_horizon = malloc(128 * 128 * 16 * 4);
+    if (!s_gpu_horizon) return NULL;
+    for (int i = 0; i < 128 * 128 * 16; i++) {
+        uint8_t index = tiles[i / (128 * 128)]->texels[i % (128 * 128)];
+        memcpy(s_gpu_horizon + i * 4, pal + index * 3, 3);
+        s_gpu_horizon[i * 4 + 3] = index == 255 ? 0 : 255;
+    }
+    return s_gpu_horizon;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void web_set_horizon(int enabled) { scene_horizon_enable(enabled); }
 
 /* Palette-index RTex → shared GPU RGBA slot (s_gpu_m16_*). */
 static int gpu_rtex_to_slot(const RTex *tex)

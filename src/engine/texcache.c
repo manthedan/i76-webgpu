@@ -692,7 +692,16 @@ static uint16_t resolve_uncached(const char *face_name, const char *vtf_file)
         return texcache_resolve_tmt_frame(face_name, 0);
     if (tile_key(face_name, key, sizeof key) != 0) return TEX_ID_NONE;
     s_c_direct++;
-    return tile_get(key, "", NULL, 0);
+    uint16_t id = tile_get(key, "", NULL, 0);
+    if (id != TEX_ID_NONE) return id;
+
+    /* Cockpit faces such as ZBKS_.MAP have a raw indexed sheet but no VQM.
+     * Keep the ordinary VQM precedence, then use the authored MAP instead
+     * of painting the face's flat fallback colour. */
+    char *dot = strrchr(key, '.');
+    if (!dot || strcmp(dot, ".vqm") != 0) return TEX_ID_NONE;
+    strcpy(dot, ".map");
+    return tile_get(key, "", NULL, 1);
 }
 
 uint16_t texcache_resolve(const char *face_name, const char *vtf_file)

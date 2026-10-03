@@ -388,6 +388,10 @@ int main(int argc, char **argv)
 
     /* 2. output carries the authored texels (libm re-implementation). */
     if (sky) {
+        /* Test the cloud mapping in isolation: authored horizon pixels are
+         * also depth-free. horizon_probe checks their combined composition. */
+        scene_horizon_enable(0);
+        render(fb3, &cam, have_terrain, have_scene);
         double f = (FB_W * 0.5) / 1.0;   /* RASTER_FOV_TAN_HALF is 1 (90 deg) */
         int cmp_n = 0, mismatch = 0, light = 0;
         for (int y = 0; y < FB_H; y += 7)
@@ -395,7 +399,7 @@ int main(int argc, char **argv)
                 int e = expected_sky_texel(&cam, sky, depth, f, x, y);
                 if (e < 0) continue;
                 cmp_n++;
-                if (s_fb[(size_t)y * FB_W + x] != e) mismatch++;
+                if (fb3[(size_t)y * FB_W + x] != e) mismatch++;
                 if (e <= 233) light++;
             }
         printf("info grid=%d mismatch=%d light_wisp=%d\n",
@@ -405,6 +409,8 @@ int main(int argc, char **argv)
               "fb matches the dome mapping of nk_1cld3.map texels "
               "(<0.1% texel-boundary slack)");
         check(light > 0, "cloud wisp texels (idx <= 233) present in sky");
+        scene_horizon_enable(1);
+        render(s_fb, &cam, have_terrain, have_scene);
     }
 
     /* 3. not the gradient: textured sky varies within rows. */
